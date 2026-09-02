@@ -203,7 +203,10 @@ jobs:
           package_name="$(node -p "require('./apps/server/package.json').name")"
           pack_dir="$RUNNER_TEMP/pack"
           mkdir -p "$pack_dir" release-assets
+          # Same manifest rewrite as `cli.ts publish`: resolved runtime deps only.
+          node scripts/fork/prepare-pack-manifest.ts "$VERSION"
           vp pm pack --filter "$package_name" --pack-destination "$pack_dir"
+          node scripts/fork/prepare-pack-manifest.ts --restore
           packed="$(ls "$pack_dir"/*.tgz)"
           test "$(printf '%s\n' "$packed" | wc -l)" -eq 1
           tarball="release-assets/q1code-${VERSION}.tgz"  # asset prefix from BRAND.releaseAssetPrefix
