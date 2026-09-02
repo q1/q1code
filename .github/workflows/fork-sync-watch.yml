@@ -1,0 +1,165 @@
+name: Fork Sync Watch
+
+# Last-resort visibility when the fleet sync unit is down. Uses only
+# GITHUB_TOKEN, never pushes: it measures how far `fork` trails upstream main,
+# dry-runs the rebase, and keeps exactly one open `fork-sync` issue while
+# there is drift or a conflict.
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: fork-sync-watch
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/pingdotgg/t3code.git
+  STALE_DAYS: 3
+
+jobs:
+  watch:
+    name: Watch upstream drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v6
+        with:
+          ref: fork
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Fetch upstream main
+        run: |
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch --no-tags upstream main
+
+      - name: Measure drift
+        id: drift
+        run: |
+          set -euo pipefail
+          base="$(git merge-base HEAD upstream/main)"
+          behind="$(git rev-list --count "$base..upstream/main")"
+          series="$(git rev-list --count "$base..HEAD")"
+          if [[ "$behind" -eq 0 ]]; then
+            days=0
+          else
+            base_time="$(git log -1 --format=%ct "$base")"
+            tip_time="$(git log -1 --format=%ct upstream/main)"
+            days=$(( (tip_time - base_time) / 86400 ))
+          fi
+          {
+            echo "base=$base"
+            echo "behind=$behind"
+            echo "series=$series"
+            echo "days=$days"
+            echo "upstream_sha=$(git rev-parse upstream/main)"
+            echo "fork_sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Dry-run rebase onto upstream main
+        id: rebase
+        run: |
+          set -uo pipefail
+          git config user.name "fork-sync-watch"
+          git config user.email "fork-sync-watch@users.noreply.github.com"
+          git config rerere.enabled false
+          git checkout -q -B dry-run-rebase HEAD
+          if git rebase upstream/main >rebase.log 2>&1; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+            echo "stopped_at=" >> "$GITHUB_OUTPUT"
+            echo "files=" >> "$GITHUB_OUTPUT"
+          else
+            stopped="$(git rev-parse -q --verify REBASE_HEAD || true)"
+            files="$(git diff --name-only --diff-filter=U | tr '\n' ' ')"
+            git rebase --abort || true
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "stopped_at=$stopped" >> "$GITHUB_OUTPUT"
+            echo "files=$files" >> "$GITHUB_OUTPUT"
+            git log -1 --format='%h %s' "$stopped" || true
+          fi
+          git checkout -q --detach "${{ steps.drift.outputs.fork_sha }}"
+
+      - name: Write summary
+        id: report
+        env:
+          BEHIND: ${{ steps.drift.outputs.behind }}
+          SERIES: ${{ steps.drift.outputs.series }}
+          DAYS: ${{ steps.drift.outputs.days }}
+          BASE: ${{ steps.drift.outputs.base }}
+          UPSTREAM_SHA: ${{ steps.drift.outputs.upstream_sha }}
+          FORK_SHA: ${{ steps.drift.outputs.fork_sha }}
+          CONFLICT: ${{ steps.rebase.outputs.conflict }}
+          STOPPED_AT: ${{ steps.rebase.outputs.stopped_at }}
+          FILES: ${{ steps.rebase.outputs.files }}
+        run: |
+          set -euo pipefail
+          {
+            echo "# Fork sync watch"
+            echo
+            echo "- fork: \`$FORK_SHA\` ($SERIES commit(s) in the series)"
+            echo "- upstream main: \`$UPSTREAM_SHA\`"
+            echo "- series base: \`$BASE\`"
+            echo "- behind upstream: $BEHIND commit(s), spanning $DAYS day(s)"
+            if [[ "$CONFLICT" == "true" ]]; then
+              echo "- dry-run rebase: **conflict** at \`$STOPPED_AT\` in: $FILES"
+            else
+              echo "- dry-run rebase: clean"
+            fi
+            echo
+            echo "_Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}_"
+          } > report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$CONFLICT" == "true" || "$DAYS" -gt "$STALE_DAYS" ]]; then
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reconcile the fork-sync issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRIFT: ${{ steps.report.outputs.drift }}
+          CONFLICT: ${{ steps.rebase.outputs.conflict }}
+          DAYS: ${{ steps.drift.outputs.days }}
+        run: |
+          set -euo pipefail
+          label=fork-sync
+          open_issues="$(gh issue list --label "$label" --state open --json number --jq '.[].number')"
+          first="$(printf '%s\n' "$open_issues" | head -n 1)"
+
+          if [[ "$DRIFT" != "true" ]]; then
+            for number in $open_issues; do
+              gh issue comment "$number" --body-file report.md
+              gh issue close "$number" --comment "fork is within ${STALE_DAYS} days of upstream and rebases cleanly."
+            done
+            exit 0
+          fi
+
+          if [[ "$CONFLICT" == "true" ]]; then
+            title="fork-sync: rebase onto upstream main conflicts"
+          else
+            title="fork-sync: fork is ${DAYS} days behind upstream main"
+          fi
+
+          gh label create "$label" --description "fork drifts from upstream" --color D93F0B --force >/dev/null
+
+          if [[ -z "$first" ]]; then
+            gh issue create --title "$title" --label "$label" --body-file report.md
+          else
+            gh issue edit "$first" --title "$title" --body-file report.md
+            # Keep exactly one: close any duplicates that were opened by hand.
+            for number in $open_issues; do
+              [[ "$number" == "$first" ]] && continue
+              gh issue close "$number" --comment "Duplicate of #$first."
+            done
+          fi
