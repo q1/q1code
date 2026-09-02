@@ -1,0 +1,308 @@
+name: Fork Release
+
+# Publishes a q1code release to GitHub: the server tarball (web bundle inside,
+# resource monitors bundled per platform), checksums.txt, and install.sh.
+# No npm publish, no signing, no desktop or mobile artifacts, no Vercel,
+# Discord, or AUR. Upstream's release.yml stays disabled on this repository.
+#
+# Tag `fork-v<version>` (or dispatch with a version). The GitHub release is
+# created under `v<version>` so clients and install.sh download from
+# releases/download/v<version>/. A version containing `nightly` is a prerelease.
+
+on:
+  push:
+    tags:
+      - "fork-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without prefix (for example 0.0.38-q1.1)"
+        required: true
+        type: string
+
+concurrency:
+  group: fork-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+      make_latest: ${{ steps.meta.outputs.make_latest }}
+      ref: ${{ github.sha }}
+    steps:
+      - name: Resolve release version
+        id: meta
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            raw="$DISPATCH_VERSION"
+          else
+            raw="${GITHUB_REF_NAME#fork-}"
+          fi
+          version="${raw#v}"
+          if [[ "$version" == *+* ]]; then
+            echo "Version '$version' contains '+': GitHub rewrites '+' in asset names and npm drops build metadata. Use a prerelease suffix such as -q1.1 instead." >&2
+            exit 1
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $raw" >&2
+            exit 1
+          fi
+          if [[ "$version" == *nightly* ]]; then
+            prerelease=true
+          else
+            prerelease=false
+          fi
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "is_prerelease=$prerelease"
+            echo "make_latest=$([[ "$prerelease" == true ]] && echo false || echo true)"
+          } >> "$GITHUB_OUTPUT"
+
+  # One native build per platform the fork deploys to. release.yml gets these
+  # as a by-product of the desktop build; here cargo runs directly.
+  resource_monitor:
+    name: Resource monitor ${{ matrix.resource_key }}
+    needs: [preflight]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - resource_key: linux-x64
+            runner: ubuntu-latest
+            rust_target: x86_64-unknown-linux-gnu
+          - resource_key: linux-arm64
+            runner: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+          - resource_key: darwin-arm64
+            runner: macos-15
+            rust_target: aarch64-apple-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@v6
+        with:
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor
+          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Build resource monitor
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target ${{ matrix.rust_target }}
+
+      - name: Collect resource monitor
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_path="native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor"
+          target_dir="resource-monitor-publish/${{ matrix.resource_key }}"
+          mkdir -p "$target_dir"
+          cp "$source_path" "$target_dir/t3-resource-monitor"
+
+      - name: Upload resource monitor
+        uses: actions/upload-artifact@v7
+        with:
+          name: resource-monitor-${{ matrix.resource_key }}
+          path: resource-monitor-publish/${{ matrix.resource_key }}/*
+          if-no-files-found: error
+
+  build:
+    name: Build server tarball
+    needs: [preflight, resource_monitor]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "$VERSION"
+
+      # The server build task depends on @t3tools/web#build, so the web client
+      # lands in apps/server/dist/client as part of this step.
+      - name: Build server package
+        run: vp run --filter t3 build
+
+      - name: Download resource monitors
+        uses: actions/download-artifact@v8
+        with:
+          pattern: resource-monitor-*
+          path: ${{ runner.temp }}/resource-monitors
+
+      - name: Bundle resource monitors into server package
+        shell: bash
+        run: |
+          set -euo pipefail
+          for artifact_dir in "$RUNNER_TEMP"/resource-monitors/resource-monitor-*; do
+            resource_key="${artifact_dir##*/resource-monitor-}"
+            target_dir="apps/server/dist/resource-monitor/${resource_key}"
+            mkdir -p "$target_dir"
+            cp "$artifact_dir"/t3-resource-monitor* "$target_dir/"
+            chmod +x "$target_dir"/t3-resource-monitor 2>/dev/null || true
+          done
+
+      # TODO(cliproxy): bundle the CLIProxyAPI sidecar here (SPEC section I.3).
+      # Expected shape: download the pinned CLIProxyAPI release per platform into
+      # apps/server/dist/cliproxy/<platform-key>/ before packing, and list the
+      # pin in fork/FEATURES.md. Left out until the `cliproxy` feature lands.
+      # - name: Bundle CLIProxyAPI sidecar
+      #   run: node scripts/fork/bundle-cliproxy.ts --version <pinned> --out apps/server/dist/cliproxy
+
+      # `vp pm pack` (pnpm) resolves the workspace `catalog:` specifiers into
+      # concrete versions the way `pnpm publish` does; plain `npm pack` would
+      # ship an uninstallable manifest.
+      - name: Pack server tarball
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_name="$(node -p "require('./apps/server/package.json').name")"
+          pack_dir="$RUNNER_TEMP/pack"
+          mkdir -p "$pack_dir" release-assets
+          vp pm pack --filter "$package_name" --pack-destination "$pack_dir"
+          packed="$(ls "$pack_dir"/*.tgz)"
+          test "$(printf '%s\n' "$packed" | wc -l)" -eq 1
+          tarball="release-assets/q1code-${VERSION}.tgz"  # asset prefix from BRAND.releaseAssetPrefix
+          mv "$packed" "$tarball"
+          echo "package_name=$package_name" >> "$GITHUB_OUTPUT"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Verify server tarball
+        shell: bash
+        env:
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+          PACKAGE_NAME: ${{ steps.pack.outputs.package_name }}
+        run: |
+          set -euo pipefail
+          listing="$(tar -tzf "$TARBALL")"
+          for required in package/dist/bin.mjs package/dist/service-launcher.mjs package/dist/client/index.html \
+            package/dist/resource-monitor/linux-x64/t3-resource-monitor \
+            package/dist/resource-monitor/linux-arm64/t3-resource-monitor \
+            package/dist/resource-monitor/darwin-arm64/t3-resource-monitor; do
+            grep -qx "$required" <<< "$listing" || { echo "missing $required in tarball" >&2; exit 1; }
+          done
+          tar -xzOf "$TARBALL" package/package.json > "$RUNNER_TEMP/packed-package.json"
+          node -e '
+            const pkg = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+            const [name, version] = process.argv.slice(2);
+            if (pkg.name !== name) throw new Error(`packed name ${pkg.name} != ${name}`);
+            if (pkg.version !== version) throw new Error(`packed version ${pkg.version} != ${version}`);
+            for (const field of ["dependencies", "optionalDependencies", "overrides"]) {
+              for (const [dep, spec] of Object.entries(pkg[field] ?? {})) {
+                if (/^(catalog|workspace):/.test(String(spec))) throw new Error(`${field}.${dep} is unresolved: ${spec}`);
+              }
+            }
+            console.log(`packed ${pkg.name}@${pkg.version} with ${Object.keys(pkg.dependencies ?? {}).length} dependencies`);
+          ' "$RUNNER_TEMP/packed-package.json" "$PACKAGE_NAME" "$VERSION"
+
+      - name: Collect installer and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp scripts/fork/install.sh release-assets/install.sh
+          chmod +x release-assets/install.sh
+          (cd release-assets && sha256sum -- *.tgz install.sh > checksums.txt)
+          cat release-assets/checksums.txt
+
+      - name: Write release notes
+        shell: bash
+        env:
+          TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+          upstream_base="$(git merge-base HEAD origin/main 2>/dev/null || echo unknown)"
+          {
+            echo "q1code $TAG"
+            echo
+            echo "- Built from \`$GITHUB_SHA\`"
+            echo "- Upstream base: \`$upstream_base\` (\`git log $upstream_base..$GITHUB_SHA\` is the fork series)"
+            echo
+            echo "Install or update:"
+            echo
+            echo '```sh'
+            echo "curl -fsSL https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/install.sh | sh -s -- ${TAG#v}"
+            echo '```'
+          } > "$RUNNER_TEMP/release-notes.md"
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: |
+            release-assets/*
+            ${{ runner.temp }}/release-notes.md
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/assets
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.preflight.outputs.tag }}
+          target_commitish: ${{ needs.preflight.outputs.ref }}
+          name: q1code ${{ needs.preflight.outputs.tag }}
+          body_path: ${{ runner.temp }}/assets/release-notes.md
+          prerelease: ${{ needs.preflight.outputs.is_prerelease }}
+          make_latest: ${{ needs.preflight.outputs.make_latest }}
+          files: |
+            ${{ runner.temp }}/assets/release-assets/*.tgz
+            ${{ runner.temp }}/assets/release-assets/checksums.txt
+            ${{ runner.temp }}/assets/release-assets/install.sh
+          fail_on_unmatched_files: true
+          token: ${{ github.token }}
