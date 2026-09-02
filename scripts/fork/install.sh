@@ -27,10 +27,12 @@ echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
   || fail "not an exact release version: $version"
 
 repo="${Q1CODE_RELEASE_REPO:-q1/q1code}"
-package="${Q1CODE_PACKAGE:-q1code}"
+# Release assets are named after the product; the npm package inside stays `t3`.
+asset_prefix="${Q1CODE_ASSET_PREFIX:-q1code}"
+package="${Q1CODE_PACKAGE:-t3}"
 home="${Q1CODE_HOME:-$HOME/.q1code}"
 base_url="${Q1CODE_RELEASE_BASE_URL:-https://github.com/$repo/releases/download/v$version}"
-tarball="$package-$version.tgz"
+tarball="$asset_prefix-$version.tgz"
 prefix="$home/runtime/versions/$version"
 entry="$prefix/node_modules/$package/dist/bin.mjs"
 
