@@ -29,4 +29,32 @@ describe("fork config", () => {
     expect(Exit.isSuccess(ok) && ok.value).toEqual({ flags: { cliproxy: true } });
     expect(Exit.isFailure(decodeForkConfigJson("{not json"))).toBe(true);
   });
+
+  it("decodes the cliproxy section and drops unknown keys inside it", () => {
+    const exit = decodeForkConfig({
+      cliproxy: {
+        port: 9000,
+        routingStrategy: "fill-first",
+        binaryPath: "/opt/cli-proxy-api",
+        releaseVersion: "7.2.200",
+        future: true,
+      },
+    });
+    expect(Exit.isSuccess(exit) && exit.value).toEqual({
+      cliproxy: {
+        port: 9000,
+        routingStrategy: "fill-first",
+        binaryPath: "/opt/cli-proxy-api",
+        releaseVersion: "7.2.200",
+      },
+    });
+  });
+
+  it("rejects an out-of-range port or an unknown routing strategy", () => {
+    expect(Exit.isFailure(decodeForkConfig({ cliproxy: { port: 70000 } }))).toBe(true);
+    expect(Exit.isFailure(decodeForkConfig({ cliproxy: { port: 80.5 } }))).toBe(true);
+    expect(Exit.isFailure(decodeForkConfig({ cliproxy: { routingStrategy: "random" } }))).toBe(
+      true,
+    );
+  });
 });
