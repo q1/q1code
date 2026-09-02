@@ -76,6 +76,10 @@ else
     || { rm -rf "$staging"; fail "npm install failed"; }
   [ -e "$staging/node_modules/$package/dist/bin.mjs" ] \
     || { rm -rf "$staging"; fail "tarball did not provide node_modules/$package/dist/bin.mjs"; }
+  # pnpm pack normalizes file modes, so bundled native binaries arrive as 0644.
+  find "$staging/node_modules/$package/dist" -type f \
+    \( -path '*/cliproxy/*/cli-proxy-api' -o -path '*/resource-monitor/*/t3-resource-monitor' \) \
+    -exec chmod 0755 {} + 2>/dev/null || true
   printf '%s\n' "$version" > "$staging/.install-complete"
   mv "$staging" "$prefix"
   echo "Installed $package $version to $prefix"
