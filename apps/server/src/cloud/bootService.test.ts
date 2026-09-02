@@ -29,7 +29,7 @@ it("keeps systemd pinned to the stable launcher rather than a versioned server",
     launcherPath: "/home/theo/.t3/runtime/service-launcher.mjs",
     baseDir: "/home/theo/.t3",
     logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
-    unitPath: "/home/theo/.config/systemd/user/t3code.service",
+    unitPath: "/home/theo/.config/systemd/user/q1code.service",
   });
 
   expect(unit).toContain("ExecStart=/usr/bin/node /home/theo/.t3/runtime/service-launcher.mjs");
@@ -43,7 +43,7 @@ it("survives the kernel OOM-killing a greedy agent child", () => {
     launcherPath: "/home/theo/.t3/runtime/service-launcher.mjs",
     baseDir: "/home/theo/.t3",
     logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
-    unitPath: "/home/theo/.config/systemd/user/t3code.service",
+    unitPath: "/home/theo/.config/systemd/user/q1code.service",
   });
 
   expect(unit).toContain("OOMPolicy=continue");
@@ -54,7 +54,7 @@ const macPlan = {
   launcherPath: "/Users/theo/.t3/runtime/service-launcher.mjs",
   baseDir: "/Users/theo/.t3",
   logPath: "/Users/theo/.t3/userdata/logs/boot-service.log",
-  unitPath: "/Users/theo/Library/LaunchAgents/com.t3tools.t3code.service.plist",
+  unitPath: "/Users/theo/Library/LaunchAgents/com.t3tools.q1code.service.plist",
 };
 const macInstallerPath =
   "/opt/homebrew/bin:/Users/theo/.npm-global/bin:/Users/theo/.nvm/versions/node/v22.16.0/bin:/usr/bin:/bin";
@@ -153,7 +153,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
       if (
         control.stateAfterStop !== undefined &&
-        (command === "systemctl --user stop t3code.service" ||
+        (command === "systemctl --user stop q1code.service" ||
           command.startsWith("launchctl bootout --wait "))
       ) {
         yield* fs.writeFileString(statePath, control.stateAfterStop).pipe(Effect.orDie);
@@ -337,7 +337,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(commands.some((command) => command.startsWith("npm "))).toBe(false);
       // The stop can block up to systemd's 90s TimeoutStopSec; the runner's
       // 60s default would cancel it mid-shutdown.
-      expect(timeouts.get("systemctl --user disable --now t3code.service")).toEqual(
+      expect(timeouts.get("systemctl --user disable --now q1code.service")).toEqual(
         Duration.seconds(120),
       );
     }),
@@ -411,9 +411,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           ),
         ).toEqual(
           platform === "linux"
-            ? ["systemctl --user stop t3code.service", "systemctl --user restart t3code.service"]
+            ? ["systemctl --user stop q1code.service", "systemctl --user restart q1code.service"]
             : [
-                "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
+                "launchctl bootout --wait gui/501/com.t3tools.q1code.service",
                 `launchctl bootstrap gui/501 ${plan.unitPath}`,
               ],
         );
@@ -476,9 +476,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
         ),
       ).toEqual([
-        "systemctl --user stop t3code.service",
+        "systemctl --user stop q1code.service",
         "systemctl --user daemon-reload",
-        "systemctl --user restart t3code.service",
+        "systemctl --user restart q1code.service",
       ]);
     }),
   );
@@ -511,8 +511,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
             (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
           ),
         ).toEqual([
-          "systemctl --user stop t3code.service",
-          "systemctl --user restart t3code.service",
+          "systemctl --user stop q1code.service",
+          "systemctl --user restart q1code.service",
         ]);
       }
     }),
@@ -531,7 +531,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const { service, fs, statePath, commands, timeouts } = yield* makeHarness("darwin");
       const plan = yield* service.install();
 
-      expect(plan.unitPath.endsWith("Library/LaunchAgents/com.t3tools.t3code.service.plist")).toBe(
+      expect(plan.unitPath.endsWith("Library/LaunchAgents/com.t3tools.q1code.service.plist")).toBe(
         true,
       );
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
@@ -552,7 +552,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
       // A bootout can block up to the plist's 90s ExitTimeOut; the runner's
       // 60s default would cancel it and let bootstrap race a loaded job.
-      expect(timeouts.get("launchctl bootout --wait gui/501/com.t3tools.t3code.service")).toEqual(
+      expect(timeouts.get("launchctl bootout --wait gui/501/com.t3tools.q1code.service")).toEqual(
         Duration.seconds(120),
       );
     }),
@@ -569,8 +569,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const error = yield* service.install().pipe(Effect.flip);
       expect(error._tag).toBe("BootServiceCommandError");
       expect(commands.filter((command) => command.startsWith("launchctl "))).toEqual([
-        "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
-        "launchctl enable gui/501/com.t3tools.t3code.service",
+        "launchctl bootout --wait gui/501/com.t3tools.q1code.service",
+        "launchctl enable gui/501/com.t3tools.q1code.service",
         `launchctl bootstrap gui/501 ${plistPath}`,
         `launchctl bootstrap gui/501 ${plistPath}`,
       ]);
@@ -633,7 +633,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     Effect.gen(function* () {
       const { service, control } = yield* makeHarness("darwin");
       yield* service.install();
-      control.failCommand = "launchctl bootout --wait gui/501/com.t3tools.t3code.service";
+      control.failCommand = "launchctl bootout --wait gui/501/com.t3tools.q1code.service";
 
       yield* service.install();
       expect((yield* service.status).current).toBe(true);
@@ -665,7 +665,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         );
         expect(serviceStateHasPendingUpdate(yield* fs.readFileString(statePath))).toBe(true);
         expect(commands.filter((command) => command.startsWith("launchctl "))).toEqual([
-          "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
+          "launchctl bootout --wait gui/501/com.t3tools.q1code.service",
           `launchctl bootstrap gui/501 ${plistPath}`,
         ]);
       }
