@@ -5,6 +5,8 @@
 # force-pushes it over `fork` with a lease on the current `fork` sha and writes
 # a sync-log skeleton (not committed) if none exists.
 set -euo pipefail
+# Pin gh to the fork even when the clone also has an `upstream` remote.
+export GH_REPO="${Q1CODE_GH_REPO:-q1/q1code}"
 
 stamp="${1:-}"
 [[ -n "$stamp" ]] || { echo "usage: scripts/fork/promote.sh <stamp>" >&2; exit 64; }
