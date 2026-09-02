@@ -286,6 +286,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["project thread tree old flat list"],
   },
   {
+    id: "q1code-feature-flags",
+    title: "q1code feature flags",
+    to: "/settings/general",
+    searchTerms: ["fork flags T3FORK fork.json update-check cliproxy"],
+  }, // fork: base
+  {
     id: "keybindings",
     title: "Keybindings",
     to: "/settings/keybindings",
