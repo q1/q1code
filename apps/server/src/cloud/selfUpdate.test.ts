@@ -6,6 +6,7 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer"; // fork: base
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -16,6 +17,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
+import { releaseDownloaderTestLayer } from "../fork/releaseTarball.testing.ts"; // fork: base
 
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
@@ -105,7 +107,8 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   return { selfUpdate, order };
 });
 
-it.layer(NodeServices.layer)("server self update", (it) => {
+const selfUpdateTestLayer = Layer.merge(NodeServices.layer, releaseDownloaderTestLayer("1.1.0")); // fork: base
+it.layer(selfUpdateTestLayer)("server self update", (it) => {
   it.effect("marks running threads at the boot-service handoff", () =>
     Effect.gen(function* () {
       const events: string[] = [];

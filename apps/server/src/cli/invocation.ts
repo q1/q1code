@@ -1,3 +1,4 @@
+import { BRAND } from "@q1code/core/brand"; // fork: base
 import * as Effect from "effect/Effect";
 
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
@@ -43,7 +44,7 @@ export function detectCliRunner(entryPath: string): CliRunner | null {
  * anything else suggests the bare package.
  */
 export function suggestedPackageSpec(version: string): string {
-  return version.includes("-nightly.") ? "t3@nightly" : "t3";
+  return version.includes("-nightly.") ? `${BRAND.cliName}@nightly` : BRAND.cliName; // fork: base
 }
 
 /**
@@ -59,7 +60,7 @@ export function formatCliCommand(input: {
 }): string {
   const runner = detectCliRunner(input.entryPath);
   if (runner === null) {
-    return `t3 ${input.subcommand}`;
+    return `${BRAND.cliName} ${input.subcommand}`; // fork: base
   }
   return `${runner} ${suggestedPackageSpec(input.version)} ${input.subcommand}`;
 }
