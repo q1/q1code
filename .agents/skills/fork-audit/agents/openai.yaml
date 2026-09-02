@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fork Audit"
+  short_description: "Compare upstream changes against the fork feature registry"
+  default_prompt: "Use $fork-audit to review upstream commits since the last audit against fork/FEATURES.md and report absorbed features, seam risks, and new extension points."
