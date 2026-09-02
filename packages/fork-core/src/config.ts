@@ -16,8 +16,28 @@ const ForkFlagOverrides = Schema.Struct(
   },
 );
 
+export const CliProxyRoutingStrategy = Schema.Literals([
+  "round-robin",
+  "weighted-round-robin",
+  "fill-first",
+]);
+export type CliProxyRoutingStrategy = typeof CliProxyRoutingStrategy.Type;
+
+/** `cliproxy` section: the few sidecar knobs a user may pin from the file. Everything else is generated. */
+export const CliProxyConfig = Schema.Struct({
+  /** Loopback port the sidecar listens on. Default 8317. */
+  port: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
+  routingStrategy: Schema.optionalKey(CliProxyRoutingStrategy),
+  /** Use this executable instead of the bundled or downloaded one. */
+  binaryPath: Schema.optionalKey(Schema.String),
+  /** Download this upstream release instead of the pinned one. */
+  releaseVersion: Schema.optionalKey(Schema.String),
+});
+export type CliProxyConfig = typeof CliProxyConfig.Type;
+
 export const ForkConfig = Schema.Struct({
   flags: Schema.optionalKey(ForkFlagOverrides),
+  cliproxy: Schema.optionalKey(CliProxyConfig),
 });
 export type ForkConfig = typeof ForkConfig.Type;
 
