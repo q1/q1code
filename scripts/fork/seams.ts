@@ -22,6 +22,7 @@ const repoRoot = NodePath.resolve(
 const forkOwnedPatterns: ReadonlyArray<RegExp> = [
   /^packages\/fork-core\//,
   /^apps\/[^/]+\/src\/fork\//,
+  /^packages\/[^/]+\/src\/fork\//,
   /^\.github\/workflows\/fork-/,
   /^\.agents\/skills\/fork-[^/]*\//,
   /^\.claude\/skills\/fork-/,
@@ -30,6 +31,10 @@ const forkOwnedPatterns: ReadonlyArray<RegExp> = [
 ];
 
 const markerPattern = /(?:\/\/|\/\*|#|<!--)\s*fork:/g;
+
+// Files where a `fork:` marker is impossible or pointless: JSON manifests, the
+// lockfile, tests adapted to fork literals, and markdown includes.
+const markerExemptPattern = /(?:\.test\.[cm]?[jt]sx?$|\.json$|pnpm-lock\.yaml$|\.md$)/;
 
 interface Options {
   readonly check: boolean;
@@ -232,7 +237,7 @@ function main(): number {
   for (const seam of seams) {
     if (seam.deleted_file) {
       problems.push(`${seam.path}: upstream file deleted by the fork series`);
-    } else if (!seam.binary && seam.markers === 0) {
+    } else if (!seam.binary && seam.markers === 0 && !markerExemptPattern.test(seam.path)) {
       problems.push(`${seam.path}: no \`fork:\` marker`);
     }
   }
