@@ -66,7 +66,7 @@ export class ReleaseDownloadError extends Schema.TaggedErrorClass<ReleaseDownloa
   }
 }
 
-/** Fetches a release asset as bytes. Tests provide a fake; production uses fetch. */
+/** Fetches a release asset as bytes. Tests provide a fake; production uses `fetchReleaseDownloader`. */
 export class ReleaseDownloader extends Context.Service<
   ReleaseDownloader,
   {
@@ -74,7 +74,7 @@ export class ReleaseDownloader extends Context.Service<
   }
 >()("t3/fork/releaseTarball/ReleaseDownloader") {}
 
-const fetchDownloader: ReleaseDownloader["Service"] = {
+export const fetchReleaseDownloader: ReleaseDownloader["Service"] = {
   download: (url) =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;
@@ -117,7 +117,7 @@ export const stageReleaseTarball = Effect.fn("fork.release_tarball.stage")(funct
 ) {
   const downloader = Option.getOrElse(
     yield* Effect.serviceOption(ReleaseDownloader),
-    () => fetchDownloader,
+    () => fetchReleaseDownloader,
   );
   const asset = releaseTarballName(input.version);
   const fail = (reason: ReleaseTarballError["reason"], cause?: unknown) =>
