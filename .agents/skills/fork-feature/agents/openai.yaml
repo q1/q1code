@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fork Feature"
+  short_description: "Scaffold a flag-gated q1code fork feature"
+  default_prompt: "Use $fork-feature to register a new fork feature, add its flag, plan its seams and surfaces, and split the work into upstream candidates and fork-only commits."

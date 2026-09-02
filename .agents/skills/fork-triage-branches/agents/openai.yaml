@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fork Triage Branches"
+  short_description: "Report on, archive, and delete legacy fork branches"
+  default_prompt: "Use $fork-triage-branches to assess each legacy branch against main, classify it, tag it as archive/<name>, delete it, and summarize in a table."

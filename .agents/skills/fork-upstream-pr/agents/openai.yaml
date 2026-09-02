@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fork Upstream PR"
+  short_description: "Extract fork commits into a clean upstream PR"
+  default_prompt: "Use $fork-upstream-pr to cherry-pick Upstream: candidate commits onto an up/<topic> branch from main, scrub fork traces, verify, and open the PR against pingdotgg/t3code."
