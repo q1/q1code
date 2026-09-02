@@ -44,6 +44,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
+import { formatAboutVersion } from "@q1code/core/brand"; // fork: base
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import {
   canCheckForUpdate,
@@ -157,6 +158,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
+import { ForkSettingsSection } from "../../fork/ForkSettingsSection"; // fork: base
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -239,7 +241,10 @@ function AboutVersionTitle() {
   return (
     <span className="inline-flex items-baseline gap-2">
       <span>Version</span>
-      <code className="text-[11px] font-medium text-muted-foreground">{APP_VERSION}</code>
+      {/* fork: base */}
+      <code className="text-[11px] font-medium text-muted-foreground">
+        {formatAboutVersion(APP_VERSION)}
+      </code>
     </span>
   );
 }
@@ -2767,7 +2772,6 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
-
       <SettingsSection title="About">
         {isElectron || HOSTED_APP_CHANNEL ? (
           <AboutVersionSection />
@@ -2787,8 +2791,8 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
-
       <LegacyFeaturesSection />
+      <ForkSettingsSection /> {/* fork: base */}
     </SettingsPageContainer>
   );
 }

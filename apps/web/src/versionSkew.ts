@@ -3,6 +3,7 @@ import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 
+import { manualInstallCommand } from "@q1code/core/brand"; // fork: base
 import { APP_VERSION } from "./branding";
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
@@ -116,7 +117,7 @@ export function supportsServerUpdateThreadContinuation(
 
 /** The command to hand users whose server cannot update itself. */
 export function manualServerUpdateCommand(targetVersion: string): string {
-  return `npx t3@${targetVersion}`;
+  return manualInstallCommand(targetVersion); // fork: base
 }
 
 export function serverUpdateGuidance(capability: ServerSelfUpdateCapability): string {
