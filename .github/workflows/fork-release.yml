@@ -304,8 +304,8 @@ jobs:
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: |
-            ${{ runner.temp }}/assets/release-assets/*.tgz
-            ${{ runner.temp }}/assets/release-assets/checksums.txt
-            ${{ runner.temp }}/assets/release-assets/install.sh
+            ${{ runner.temp }}/assets/*.tgz
+            ${{ runner.temp }}/assets/checksums.txt
+            ${{ runner.temp }}/assets/install.sh
           fail_on_unmatched_files: true
           token: ${{ github.token }}
