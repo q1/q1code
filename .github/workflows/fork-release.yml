@@ -275,9 +275,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: release-assets
-          path: |
-            release-assets/*
-            ${{ runner.temp }}/release-notes.md
+          path: release-assets/*
           if-no-files-found: error
 
   release:
