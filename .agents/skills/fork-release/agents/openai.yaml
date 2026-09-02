@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fork Release"
+  short_description: "Tag and publish a q1code GitHub release"
+  default_prompt: "Use $fork-release to tag fork-v<upstreamVersion>-q1.<n>, run fork-release.yml, verify the tarball, checksums, and install.sh, and report for deploy."
