@@ -37,6 +37,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@q1code/core": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
