@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fork Sync"
+  short_description: "Rebase the q1code fork series onto upstream main"
+  default_prompt: "Use $fork-sync to fetch upstream, rebase fork onto main under the conflict rules, run the gates, and promote or open the sync PR."
