@@ -219,6 +219,34 @@ it.layer(NodeServices.layer)("CliProxyBinary", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect("restores the executable bit on a bundled copy that lost it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "q1code-cliproxy-binary-" });
+      const bundledRoot = path.join(root, "bundled");
+      const bundled = path.join(bundledRoot, `${PLATFORM}-${ARCHITECTURE}`, "cli-proxy-api");
+      yield* fs.makeDirectory(path.dirname(bundled), { recursive: true });
+      yield* fs.writeFileString(bundled, "#!/bin/sh\n");
+      yield* fs.chmod(bundled, 0o644);
+      const downloader = makeDownloader(new Map());
+      const layers = makeLayers({
+        baseDir: path.join(root, "base"),
+        bundledRoot,
+        downloader: downloader.layer,
+      });
+
+      const resolved = yield* Effect.gen(function* () {
+        const binary = yield* CliProxyBinary;
+        return yield* binary.resolve();
+      }).pipe(Effect.provide(layers));
+      assert.equal(resolved.path, bundled);
+      const mode = (yield* fs.stat(bundled)).mode;
+      assert.notEqual(mode & 0o111, 0);
+      assert.deepEqual(downloader.urls, []);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("fails fast on a platform without a release", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

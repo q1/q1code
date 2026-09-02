@@ -159,7 +159,13 @@ export const make = Effect.fn("cliproxy.binary.make")(function* () {
     if (platform !== "win32") {
       const stat = yield* fs.stat(candidate).pipe(Effect.option);
       if (Option.isSome(stat) && (stat.value.mode & 0o111) === 0) {
-        return yield* new CliProxyBinaryNotExecutable({ path: candidate, mode: stat.value.mode });
+        // npm installs can drop the executable bit from bundled binaries; restore it once.
+        const restored = yield* fs
+          .chmod(candidate, 0o755)
+          .pipe(Effect.andThen(fs.stat(candidate)), Effect.option);
+        if (Option.isNone(restored) || (restored.value.mode & 0o111) === 0) {
+          return yield* new CliProxyBinaryNotExecutable({ path: candidate, mode: stat.value.mode });
+        }
       }
     }
     return Option.some(candidate);
