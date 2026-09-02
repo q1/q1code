@@ -1,7 +1,8 @@
 name: Fork Release
 
 # Publishes a q1code release to GitHub: the server tarball (web bundle inside,
-# resource monitors bundled per platform), checksums.txt, and install.sh.
+# resource monitors and the CLIProxyAPI sidecar bundled per platform),
+# checksums.txt, and install.sh.
 # No npm publish, no signing, no desktop or mobile artifacts, no Vercel,
 # Discord, or AUR. Upstream's release.yml stays disabled on this repository.
 #
@@ -185,12 +186,33 @@ jobs:
             chmod +x "$target_dir"/t3-resource-monitor 2>/dev/null || true
           done
 
-      # TODO(cliproxy): bundle the CLIProxyAPI sidecar here (SPEC section I.3).
-      # Expected shape: download the pinned CLIProxyAPI release per platform into
-      # apps/server/dist/cliproxy/<platform-key>/ before packing, and list the
-      # pin in fork/FEATURES.md. Left out until the `cliproxy` feature lands.
-      # - name: Bundle CLIProxyAPI sidecar
-      #   run: node scripts/fork/bundle-cliproxy.ts --version <pinned> --out apps/server/dist/cliproxy
+      # The `cliproxy` sidecar: the pinned upstream release per platform, verified
+      # against the release's checksums.txt, unpacked to where
+      # apps/server/src/fork/cliproxy/CliProxyBinary.ts looks first. Platform keys
+      # and asset names come from packages/fork-core/src/cliproxy.pin.json so the
+      # server's on-demand download and this step can never disagree.
+      - name: Bundle CLIProxyAPI sidecar into server package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="packages/fork-core/src/cliproxy.pin.json"
+          version="$(node -p "require('./$pin').version")"
+          repository="$(node -p "require('./$pin').repository")"
+          base_url="https://github.com/${repository}/releases/download/v${version}"
+          work="$RUNNER_TEMP/cliproxy"
+          mkdir -p "$work"
+          curl -fsSL --retry 3 -o "$work/checksums.txt" "$base_url/checksums.txt"
+          for platform_key in linux-x64 linux-arm64 darwin-arm64; do
+            target="$(node -p "require('./$pin').platforms['$platform_key']")"
+            asset="CLIProxyAPI_${version}_${target}.tar.gz"
+            curl -fsSL --retry 3 -o "$work/$asset" "$base_url/$asset"
+            (cd "$work" && grep -E " \*?${asset}\$" checksums.txt | sha256sum -c -)
+            out_dir="apps/server/dist/cliproxy/${platform_key}"
+            mkdir -p "$out_dir"
+            tar -xzf "$work/$asset" -C "$out_dir" cli-proxy-api
+            chmod +x "$out_dir/cli-proxy-api"
+          done
+          rm -rf "$work"
 
       # `vp pm pack` (pnpm) resolves the workspace `catalog:` specifiers into
       # concrete versions the way `pnpm publish` does; plain `npm pack` would
@@ -225,7 +247,10 @@ jobs:
           for required in package/dist/bin.mjs package/dist/service-launcher.mjs package/dist/client/index.html \
             package/dist/resource-monitor/linux-x64/t3-resource-monitor \
             package/dist/resource-monitor/linux-arm64/t3-resource-monitor \
-            package/dist/resource-monitor/darwin-arm64/t3-resource-monitor; do
+            package/dist/resource-monitor/darwin-arm64/t3-resource-monitor \
+            package/dist/cliproxy/linux-x64/cli-proxy-api \
+            package/dist/cliproxy/linux-arm64/cli-proxy-api \
+            package/dist/cliproxy/darwin-arm64/cli-proxy-api; do
             grep -qx "$required" <<< "$listing" || { echo "missing $required in tarball" >&2; exit 1; }
           done
           tar -xzOf "$TARBALL" package/package.json > "$RUNNER_TEMP/packed-package.json"
