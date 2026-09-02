@@ -59,6 +59,10 @@
       "types": "./src/codexMarkdownDirectives.ts",
       "default": "./src/codexMarkdownDirectives.ts"
     },
+    "./fork": {
+      "types": "./src/fork/forkFlags.ts",
+      "default": "./src/fork/forkFlags.ts"
+    },
     "./errors": {
       "types": "./src/errors/index.ts",
       "default": "./src/errors/index.ts"
@@ -253,6 +257,7 @@
     "test": "vp test run"
   },
   "dependencies": {
+    "@q1code/core": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "effect": "catalog:",
