@@ -7,7 +7,12 @@
  * `serverSettings.ts` watches `settings.json`, so edits land without a restart.
  * Clients receive the resolved values through `ExecutionEnvironmentCapabilities.forkFlags`.
  */
-import { FORK_CONFIG_FILENAME, decodeForkConfigJson } from "@q1code/core/config";
+import {
+  EMPTY_FORK_CONFIG,
+  FORK_CONFIG_FILENAME,
+  type ForkConfig,
+  decodeForkConfigJson,
+} from "@q1code/core/config";
 import {
   DEFAULT_FORK_FLAGS,
   FORK_FLAG_KEYS,
@@ -39,6 +44,8 @@ export class ForkFlagsService extends Context.Service<
     readonly reload: Effect.Effect<ForkFlagValues>;
     /** Emits the full flag set each time a value changes. */
     readonly changes: Stream.Stream<ForkFlagValues>;
+    /** The whole decoded `fork.json` as of the last reload (feature sections live next to `flags`). */
+    readonly config: Effect.Effect<ForkConfig>;
   }
 >()("t3/fork/ForkFlags/ForkFlagsService") {}
 
@@ -61,6 +68,7 @@ const make = Effect.gen(function* () {
   const env = yield* ForkFlagsEnvironment;
   const configPath = forkConfigPath(stateDir, path);
   const valuesRef = yield* Ref.make<ForkFlagValues>(DEFAULT_FORK_FLAGS);
+  const configRef = yield* Ref.make<ForkConfig>(EMPTY_FORK_CONFIG);
   const warnedRef = yield* Ref.make(false);
   const reloadSemaphore = yield* Semaphore.make(1);
   const changesPubSub = yield* PubSub.unbounded<ForkFlagValues>();
@@ -69,14 +77,14 @@ const make = Effect.gen(function* () {
 
   // Missing file -> no file overrides. Malformed file -> warn once, no file
   // overrides. The warning re-arms after the file parses again.
-  const readFileFlags = Effect.gen(function* () {
+  const readFileConfig = Effect.gen(function* () {
     if (!(yield* fs.exists(configPath))) {
       return undefined;
     }
     const decoded = decodeForkConfigJson(yield* fs.readFileString(configPath));
     if (Exit.isSuccess(decoded)) {
       yield* Ref.set(warnedRef, false);
-      return decoded.value.flags;
+      return decoded.value;
     }
     if (yield* Ref.getAndSet(warnedRef, true)) {
       return undefined;
@@ -97,7 +105,9 @@ const make = Effect.gen(function* () {
 
   const reload = reloadSemaphore.withPermits(1)(
     Effect.gen(function* () {
-      const next = resolveForkFlags({ env, file: yield* readFileFlags });
+      const fileConfig = yield* readFileConfig;
+      yield* Ref.set(configRef, fileConfig ?? EMPTY_FORK_CONFIG);
+      const next = resolveForkFlags({ env, file: fileConfig?.flags });
       const previous = yield* Ref.getAndSet(valuesRef, next);
       if (!sameFlags(previous, next)) {
         yield* PubSub.publish(changesPubSub, next);
@@ -133,6 +143,7 @@ const make = Effect.gen(function* () {
     current: Ref.get(valuesRef),
     reload,
     changes: Stream.fromPubSub(changesPubSub),
+    config: Ref.get(configRef),
   });
 });
 
@@ -148,12 +159,16 @@ export const attachForkFlags = (
     capabilities: { ...descriptor.capabilities, forkFlags },
   }));
 
-export const layerTest = (overrides: Partial<ForkFlagValues> = {}) =>
+export const layerTest = (
+  overrides: Partial<ForkFlagValues> = {},
+  config: ForkConfig = EMPTY_FORK_CONFIG,
+) =>
   Layer.succeed(
     ForkFlagsService,
     ForkFlagsService.of({
       current: Effect.succeed({ ...DEFAULT_FORK_FLAGS, ...overrides }),
       reload: Effect.succeed({ ...DEFAULT_FORK_FLAGS, ...overrides }),
       changes: Stream.empty,
+      config: Effect.succeed(config),
     }),
   );
