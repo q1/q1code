@@ -1,0 +1,266 @@
+// @effect-diagnostics nodeBuiltinImport:off
+/**
+ * Where the CLIProxyAPI executable comes from, in order: an explicit
+ * `fork.json.cliproxy.binaryPath`, the copy `fork-release.yml` bundles next to
+ * the server entry (`dist/cliproxy/<platform-arch>/cli-proxy-api`), a cached
+ * download under `<baseDir>/cliproxy/bin/<version>/`, and finally a fresh
+ * download of the pinned GitHub release verified against its `checksums.txt`.
+ */
+import {
+  CLIPROXY_PIN,
+  cliproxyArchiveKind,
+  cliproxyAssetName,
+  cliproxyChecksumsUrl,
+  cliproxyExecutableName,
+  cliproxyPlatformKey,
+  cliproxyReleaseUrl,
+} from "@q1code/core/cliproxy";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as NodePath from "node:path";
+
+import * as ServerConfig from "../../config.ts";
+import * as ProcessRunner from "../../processRunner.ts";
+import {
+  ReleaseDownloader,
+  fetchReleaseDownloader,
+  parseChecksums,
+  sha256Hex,
+} from "../releaseTarball.ts";
+import { cliproxyDirectories } from "./CliProxyConfig.ts";
+
+export class CliProxyBinaryUnsupported extends Schema.TaggedErrorClass<CliProxyBinaryUnsupported>()(
+  "CliProxyBinaryUnsupported",
+  {
+    platform: Schema.String,
+    architecture: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `CLIProxyAPI has no release for ${this.platform}/${this.architecture}.`;
+  }
+}
+
+export class CliProxyBinaryNotFound extends Schema.TaggedErrorClass<CliProxyBinaryNotFound>()(
+  "CliProxyBinaryNotFound",
+  {
+    path: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `CLIProxyAPI binary was not found at '${this.path}'.`;
+  }
+}
+
+export class CliProxyBinaryNotExecutable extends Schema.TaggedErrorClass<CliProxyBinaryNotExecutable>()(
+  "CliProxyBinaryNotExecutable",
+  {
+    path: Schema.String,
+    mode: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `CLIProxyAPI binary at '${this.path}' is not executable.`;
+  }
+}
+
+export class CliProxyBinaryDownloadError extends Schema.TaggedErrorClass<CliProxyBinaryDownloadError>()(
+  "CliProxyBinaryDownloadError",
+  {
+    reason: Schema.Literals([
+      "download-failed",
+      "checksum-missing",
+      "checksum-mismatch",
+      "extract-failed",
+      "write-failed",
+      "unsupported-archive",
+    ]),
+    version: Schema.String,
+    asset: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `CLIProxyAPI ${this.version} download failed (${this.reason}) for ${this.asset}.`;
+  }
+}
+
+const isDownloadError = Schema.is(CliProxyBinaryDownloadError);
+
+export type CliProxyBinaryError =
+  | CliProxyBinaryUnsupported
+  | CliProxyBinaryNotFound
+  | CliProxyBinaryNotExecutable
+  | CliProxyBinaryDownloadError;
+
+export interface ResolvedCliProxyBinary {
+  readonly path: string;
+  /** Upstream release version, or `custom` for an explicit `binaryPath`. */
+  readonly version: string;
+  readonly source: "override" | "bundled" | "cache" | "download";
+}
+
+export interface CliProxyBinaryOptions {
+  readonly binaryPath?: string | undefined;
+  readonly version?: string | undefined;
+}
+
+/** Directories that may hold `<platform-arch>/cli-proxy-api`; tests point this at a temp dir. */
+export const CliProxyBundledRoots = Context.Reference<ReadonlyArray<string>>(
+  "t3/fork/cliproxy/CliProxyBinary/CliProxyBundledRoots",
+  {
+    // `import.meta.dirname` is `dist/` in the packed server and this source
+    // directory in dev; both resolve to `apps/server/dist/cliproxy/`.
+    defaultValue: () => [
+      NodePath.resolve(import.meta.dirname, "cliproxy"),
+      NodePath.resolve(import.meta.dirname, "../../../dist/cliproxy"),
+    ],
+  },
+);
+
+export class CliProxyBinary extends Context.Service<
+  CliProxyBinary,
+  {
+    readonly resolve: (
+      options?: CliProxyBinaryOptions,
+    ) => Effect.Effect<ResolvedCliProxyBinary, CliProxyBinaryError>;
+  }
+>()("t3/fork/cliproxy/CliProxyBinary") {}
+
+export const make = Effect.fn("cliproxy.binary.make")(function* () {
+  const config = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const runner = yield* ProcessRunner.ProcessRunner;
+  const platform = yield* HostProcessPlatform;
+  const architecture = yield* HostProcessArchitecture;
+  const downloader = Option.getOrElse(
+    yield* Effect.serviceOption(ReleaseDownloader),
+    () => fetchReleaseDownloader,
+  );
+  const executableName = cliproxyExecutableName(platform);
+  const platformKey = cliproxyPlatformKey(platform, architecture);
+  const directories = cliproxyDirectories(config.baseDir, path);
+  const bundledRoots = yield* CliProxyBundledRoots;
+  const bundledCandidates =
+    platformKey === undefined
+      ? []
+      : bundledRoots.map((root) => path.join(root, platformKey, executableName));
+
+  const executableAt = Effect.fn("cliproxy.binary.executableAt")(function* (candidate: string) {
+    const exists = yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+    if (!exists) return Option.none<string>();
+    if (platform !== "win32") {
+      const stat = yield* fs.stat(candidate).pipe(Effect.option);
+      if (Option.isSome(stat) && (stat.value.mode & 0o111) === 0) {
+        return yield* new CliProxyBinaryNotExecutable({ path: candidate, mode: stat.value.mode });
+      }
+    }
+    return Option.some(candidate);
+  });
+
+  const download = Effect.fn("cliproxy.binary.download")(function* (
+    version: string,
+    target: string,
+  ): Effect.fn.Return<string, CliProxyBinaryError> {
+    const asset = cliproxyAssetName(platform, architecture, version);
+    if (asset === undefined) {
+      return yield* new CliProxyBinaryUnsupported({ platform, architecture });
+    }
+    const fail = (reason: CliProxyBinaryDownloadError["reason"], cause?: unknown) =>
+      new CliProxyBinaryDownloadError({ reason, version, asset, cause });
+    if (cliproxyArchiveKind(platform) !== "tar.gz") {
+      return yield* fail("unsupported-archive");
+    }
+    const checksums = yield* downloader.download(cliproxyChecksumsUrl(version)).pipe(
+      Effect.map((bytes) => parseChecksums(new TextDecoder().decode(bytes))),
+      Effect.mapError((cause) => fail("download-failed", cause)),
+    );
+    const expected = checksums.get(asset);
+    if (expected === undefined) {
+      return yield* fail("checksum-missing");
+    }
+    const url = cliproxyReleaseUrl(platform, architecture, version);
+    if (url === undefined) {
+      return yield* new CliProxyBinaryUnsupported({ platform, architecture });
+    }
+    const archive = yield* downloader
+      .download(url)
+      .pipe(Effect.mapError((cause) => fail("download-failed", cause)));
+    if (sha256Hex(archive) !== expected) {
+      return yield* fail("checksum-mismatch");
+    }
+
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* fs.makeDirectory(directories.binDir, { recursive: true });
+        const staging = yield* fs.makeTempDirectoryScoped({
+          directory: directories.binDir,
+          prefix: `${version}.download-`,
+        });
+        const archivePath = path.join(staging, asset);
+        yield* fs.writeFile(archivePath, archive);
+        const extracted = yield* runner.run({
+          command: "tar",
+          args: ["-xzf", archivePath, "-C", staging, executableName],
+          cwd: staging,
+          timeout: "2 minutes",
+        });
+        if (extracted.code !== 0) {
+          return yield* fail("extract-failed", new Error(extracted.stderr.trim()));
+        }
+        const extractedPath = path.join(staging, executableName);
+        yield* fs.chmod(extractedPath, 0o755);
+        yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+        yield* fs.rename(extractedPath, target);
+        return target;
+      }),
+    ).pipe(
+      Effect.catchIf(
+        (error): error is Exclude<typeof error, CliProxyBinaryDownloadError> =>
+          !isDownloadError(error),
+        (cause) => fail("write-failed", cause),
+      ),
+    );
+  });
+
+  const resolve: CliProxyBinary["Service"]["resolve"] = Effect.fn("cliproxy.binary.resolve")(
+    function* (options = {}) {
+      const override = options.binaryPath?.trim();
+      if (override !== undefined && override.length > 0) {
+        const found = yield* executableAt(override);
+        if (Option.isNone(found)) {
+          return yield* new CliProxyBinaryNotFound({ path: override });
+        }
+        return { path: found.value, version: "custom", source: "override" } as const;
+      }
+      if (platformKey === undefined) {
+        return yield* new CliProxyBinaryUnsupported({ platform, architecture });
+      }
+      for (const candidate of bundledCandidates) {
+        const found = yield* executableAt(candidate);
+        if (Option.isSome(found)) {
+          return { path: found.value, version: CLIPROXY_PIN.version, source: "bundled" } as const;
+        }
+      }
+      const version = options.version?.trim() || CLIPROXY_PIN.version;
+      const cached = path.join(directories.binDir, version, executableName);
+      const found = yield* executableAt(cached);
+      if (Option.isSome(found)) {
+        return { path: found.value, version, source: "cache" } as const;
+      }
+      const downloaded = yield* download(version, cached);
+      return { path: downloaded, version, source: "download" } as const;
+    },
+  );
+
+  return CliProxyBinary.of({ resolve });
+});
+
+export const layer = Layer.effect(CliProxyBinary, make());

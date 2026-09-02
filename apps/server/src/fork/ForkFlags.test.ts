@@ -79,6 +79,19 @@ it.layer(NodeServices.layer)("ForkFlags", (it) => {
     );
   });
 
+  it.effect("exposes the decoded file config next to the flags", () =>
+    Effect.gen(function* () {
+      const flags = yield* ForkFlags.ForkFlagsService;
+      assert.deepEqual(yield* flags.config, {});
+      yield* writeForkConfig('{"flags":{"cliproxy":true},"cliproxy":{"port":9001}}');
+      yield* flags.reload;
+      assert.deepEqual(yield* flags.config, {
+        flags: { cliproxy: true },
+        cliproxy: { port: 9001 },
+      });
+    }).pipe(Effect.provide(makeLayers())),
+  );
+
   it.effect("publishes a change when a reload moves a value", () =>
     Effect.gen(function* () {
       const flags = yield* ForkFlags.ForkFlagsService;
