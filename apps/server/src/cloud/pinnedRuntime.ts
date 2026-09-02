@@ -6,6 +6,8 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 
+import { BRAND } from "@q1code/core/brand"; // fork: base
+import { stageReleaseTarball } from "../fork/releaseTarball.ts"; // fork: base
 import * as ProcessRunner from "../processRunner.ts";
 
 /**
@@ -36,7 +38,7 @@ export function pinnedRuntimePaths(
   const versionDir = path.join(baseDir, PINNED_RUNTIME_DIR, "versions", version);
   return {
     versionDir,
-    entryPath: path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs"),
+    entryPath: path.join(versionDir, BRAND.runtimeEntryRelativePath), // fork: base
     sentinelPath: path.join(versionDir, ".install-complete"),
   };
 }
@@ -146,16 +148,20 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
     );
   const stagingPaths: PinnedRuntimePaths = {
     versionDir: stagingDir,
-    entryPath: input.path.join(stagingDir, "node_modules", "t3", "dist", "bin.mjs"),
+    entryPath: input.path.join(stagingDir, BRAND.runtimeEntryRelativePath), // fork: base
     sentinelPath: input.path.join(stagingDir, ".install-complete"),
   };
 
   return yield* Effect.gen(function* () {
     const installStep = "installing the pinned t3 runtime (this can take a few minutes)";
+    const tarballPath = yield* stageReleaseTarball(input, stagingDir).pipe(
+      // fork: base
+      Effect.mapError((cause) => new PinnedRuntimeInstallError({ step: cause.step, cause })), // fork: base
+    ); // fork: base
     yield* runner
       .run({
         command: "npm",
-        args: ["install", "--prefix", stagingDir, "--no-fund", "--no-audit", `t3@${input.version}`],
+        args: ["install", "--prefix", stagingDir, "--no-fund", "--no-audit", tarballPath], // fork: base
         // Native dependencies may compile from source on slower machines.
         timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
       })
