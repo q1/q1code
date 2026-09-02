@@ -18,6 +18,7 @@ import { readAgentActivityPublishingActive } from "../cloud/config.ts";
 import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
+import * as ForkFlags from "../fork/ForkFlags.ts"; // fork: base
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 
@@ -183,6 +184,7 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const identity = yield* ServerEnvironmentIdentity;
+  const forkFlags = yield* ForkFlags.ForkFlagsService; // fork: base
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
   const environmentId = yield* identity.getEnvironmentId;
@@ -243,6 +245,7 @@ export const make = Effect.gen(function* () {
         ...descriptor,
         capabilities: { ...descriptor.capabilities, agentActivityPublishing },
       })),
+      Effect.flatMap((d) => ForkFlags.attachForkFlags(d, forkFlags)), // fork: base
     ),
   });
 });
@@ -258,4 +261,5 @@ export const identityLayer = Layer.effect(ServerEnvironmentIdentity, makeIdentit
 export const layer = Layer.effect(ServerEnvironment, make).pipe(
   Layer.provideMerge(identityLayer),
   Layer.provide(ProcessRunner.layer),
+  Layer.provide(ForkFlags.layer), // fork: base
 );
