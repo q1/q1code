@@ -269,7 +269,7 @@ jobs:
             echo '```sh'
             echo "curl -fsSL https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/install.sh | sh -s -- ${TAG#v}"
             echo '```'
-          } > "$RUNNER_TEMP/release-notes.md"
+          } > release-assets/release-notes.md
 
       - name: Upload release assets
         uses: actions/upload-artifact@v7
