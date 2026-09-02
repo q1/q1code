@@ -292,6 +292,10 @@ jobs:
           name: release-assets
           path: ${{ runner.temp }}/assets
 
+      - name: List downloaded assets
+        shell: bash
+        run: find "$RUNNER_TEMP/assets" -maxdepth 4 -type f | sort
+
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
