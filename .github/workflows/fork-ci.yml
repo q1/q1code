@@ -1,0 +1,355 @@
+name: Fork CI
+
+# Fork-owned CI. Mirrors ci.yml's jobs on hosted runners and adds the fork
+# gates: seam budget, upstream-PR leak check, and flags-off parity. Upstream's
+# ci.yml stays in the tree but is disabled on this repository.
+
+on:
+  pull_request:
+    branches:
+      - fork
+  push:
+    branches:
+      - fork
+      - "sync/**"
+      - "up/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/fork' }}
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Reject repository-owned PR assets
+        run: |
+          files="$(git ls-files .github/pr-assets)"
+          if test -n "$files"; then
+            printf 'PR evidence must be uploaded to GitHub, not committed:\n%s\n' "$files" >&2
+            exit 1
+          fi
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Check
+        run: vp check
+
+      - name: Typecheck
+        run: vpr typecheck
+
+      - name: Build desktop pipeline
+        run: vp run build:desktop
+
+      - name: Verify preload bundle output
+        run: node apps/desktop/scripts/verify-preload-bundle.mjs
+
+  # Everything except the server package (`q1code`, apps/server). Same shape as
+  # upstream's Test job; the assertion step is the flags-off parity guard.
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Assert no fork flags are set
+        run: |
+          if env | grep -q '^T3FORK_'; then
+            echo 'T3FORK_* is set; the upstream suites must run with every fork flag off.' >&2
+            env | grep '^T3FORK_' >&2
+            exit 1
+          fi
+
+      - name: Test
+        run: vp run --parallel --concurrency-limit 4 --filter '!q1code' --filter '!@t3tools/monorepo' test
+
+  # apps/server runs its files one at a time; sharding spreads them over runners.
+  test_server:
+    name: Test Server ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Assert no fork flags are set
+        run: |
+          if env | grep -q '^T3FORK_'; then
+            echo 'T3FORK_* is set; the upstream suites must run with every fork flag off.' >&2
+            env | grep '^T3FORK_' >&2
+            exit 1
+          fi
+
+      - name: Test
+        env:
+          T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
+        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+
+      - name: Publish transfer budget report
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/t3code-transfer-budget.md"; then
+            tee -a "$GITHUB_STEP_SUMMARY" < "${{ runner.temp }}/t3code-transfer-budget.md"
+          fi
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check resource monitor formatting
+        run: cargo fmt --manifest-path native/resource-monitor/Cargo.toml -- --check
+
+      - name: Test resource monitor
+        run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
+
+  # Seam budget: every upstream file the series touches must carry a `fork:`
+  # marker and the total stays under budget. Dependency-free, no install.
+  seams:
+    name: Seams
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - name: Check seams
+        run: node scripts/fork/seams.ts --check --base origin/main --head HEAD
+
+      - name: Publish seam table
+        if: always()
+        run: |
+          if test -f fork/SEAMS.md; then
+            cat fork/SEAMS.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # up/<topic> branches become upstream PRs; nothing fork-shaped may leak in.
+  leak_check:
+    name: Leak Check
+    if: startsWith(github.ref, 'refs/heads/up/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - name: Check for fork leakage
+        run: node scripts/fork/leak-check.ts --range origin/main..HEAD
+
+  # Flags-off parity: upstream's own suites (Test, Test Server) are the check.
+  # They ran on this fork tree with no T3FORK_* set, so a green Test + Test
+  # Server on fork/sync is the invariant; this job names it as one gate.
+  parity:
+    name: Flags-off Parity
+    needs: [test, test_server]
+    if: ${{ !cancelled() && (github.ref == 'refs/heads/fork' || startsWith(github.ref, 'refs/heads/sync/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Assert no fork flags are set
+        run: |
+          if env | grep -q '^T3FORK_'; then
+            echo 'T3FORK_* is set in this workflow environment.' >&2
+            exit 1
+          fi
+
+      - name: Require upstream suites to pass
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          TEST_SERVER_RESULT: ${{ needs.test_server.result }}
+        run: |
+          echo "test=$TEST_RESULT test_server=$TEST_SERVER_RESULT"
+          test "$TEST_RESULT" = success && test "$TEST_SERVER_RESULT" = success
+
+  # The static analysis below needs a macOS runner, so it is gated on the native
+  # sources it lints, exactly as upstream does. Fails open when the diff cannot
+  # be resolved. A fresh branch (no `before` sha) is compared against its base.
+  mobile_native_changes:
+    name: Mobile Native Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      changed: ${{ steps.detect.outputs.changed }}
+    steps:
+      - name: Detect mobile native changes
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+
+          fail_open() {
+            echo "$* Running native static analysis."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          count_rows() {
+            printf '%s\n' "$1" | grep -c . || true
+          }
+
+          row='[.filename, (.previous_filename // empty)] | @tsv'
+
+          if [[ -n "${PR_NUMBER}" ]]; then
+            expected=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.changed_files') \
+              || fail_open "Could not read the pull request."
+            rows=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq ".[] | ${row}") \
+              || fail_open "Could not resolve changed files."
+
+            listed=$(count_rows "$rows")
+            if [[ "$listed" -lt "$expected" ]]; then
+              fail_open "GitHub listed only ${listed} of ${expected} changed files."
+            fi
+          else
+            base="${BEFORE_SHA}"
+            if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+              case "${GITHUB_REF_NAME}" in
+                up/*) base=main ;;
+                *) base=fork ;;
+              esac
+            fi
+            rows=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${base}...${GITHUB_SHA}" --jq ".files[]? | ${row}") \
+              || fail_open "Could not resolve changed files."
+
+            listed=$(count_rows "$rows")
+            if [[ "$listed" -ge 300 ]]; then
+              fail_open "GitHub listed ${listed} changed files, the compare endpoint maximum."
+            fi
+          fi
+
+          paths=$(tr '\t' '\n' <<< "$rows")
+
+          pattern='^apps/mobile/.*\.(swift|kt|kts)$|^apps/mobile/(\.swiftlint\.yml|detekt\.yml|\.editorconfig|Brewfile)$|^scripts/mobile-native-static-check\.ts$|^package\.json$|^\.github/workflows/fork-ci\.yml$'
+
+          if grep -qE "$pattern" <<< "$paths"; then
+            echo "Native sources or lint configuration changed:"
+            grep -E "$pattern" <<< "$paths"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No mobile native sources or lint configuration changed."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  mobile_native_static_analysis:
+    name: Mobile Native Static Analysis
+    needs: mobile_native_changes
+    if: ${{ !cancelled() && needs.mobile_native_changes.outputs.changed != 'false' }}
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Install mobile native static analysis tools
+        run: brew bundle install --file apps/mobile/Brewfile
+
+      - name: Lint mobile native sources
+        run: vp run lint:mobile
