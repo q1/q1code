@@ -16,6 +16,7 @@
     "@clerk/electron-passkeys": "catalog:",
     "@effect/platform-node": "catalog:",
     "@napi-rs/keyring": "^1.3.0",
+    "@q1code/core": "workspace:*",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
