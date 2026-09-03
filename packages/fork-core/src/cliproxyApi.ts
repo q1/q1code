@@ -156,22 +156,34 @@ export const CliProxySyncEntry = Schema.Struct({
 });
 export type CliProxySyncEntry = typeof CliProxySyncEntry.Type;
 
+/** A deletion that still has to reach the other side. A file stamped strictly later than `deletedAt` beats it. */
+export const CliProxySyncTombstone = Schema.Struct({
+  id: CliProxyAccountId,
+  deletedAt: IsoTimestamp,
+});
+export type CliProxySyncTombstone = typeof CliProxySyncTombstone.Type;
+
+/** Version 2 adds `tombstones`; a version 1 bundle (no tombstones) still decodes. */
 export const CliProxySyncBundle = Schema.Struct({
-  version: Schema.Literal(1),
+  version: Schema.Literals([1, 2]),
   generatedAt: IsoTimestamp,
   primaryEnvironmentId: Schema.String,
   entries: Schema.Array(CliProxySyncEntry),
+  tombstones: Schema.optionalKey(Schema.Array(CliProxySyncTombstone)),
 });
 export type CliProxySyncBundle = typeof CliProxySyncBundle.Type;
 
 export const CliProxySyncPush = Schema.Struct({
   entries: Schema.Array(CliProxySyncEntry),
+  tombstones: Schema.optionalKey(Schema.Array(CliProxySyncTombstone)),
 });
 export type CliProxySyncPush = typeof CliProxySyncPush.Type;
 
 export const CliProxySyncPushResult = Schema.Struct({
   written: Schema.Array(CliProxyAccountId),
   skipped: Schema.Array(CliProxyAccountId),
+  /** Files the pushed tombstones removed on the primary. Absent from a version 1 primary. */
+  deleted: Schema.optionalKey(Schema.Array(CliProxyAccountId)),
 });
 export type CliProxySyncPushResult = typeof CliProxySyncPushResult.Type;
 

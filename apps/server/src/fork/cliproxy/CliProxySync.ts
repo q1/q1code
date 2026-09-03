@@ -3,7 +3,14 @@
  * tailnet). One environment is the primary; replicas pull its `auths/` on a
  * timer, write files that are newer than their own, then push back any local
  * file that is newer than the primary's copy (refreshed tokens). Last writer
- * wins by file mtime; equal stamps are skipped; there are no tombstones.
+ * wins by file mtime; equal stamps are skipped.
+ *
+ * Deletions travel as tombstones (`<baseDir>/cliproxy/tombstones.json`,
+ * `{ "<auth file>": "<deletedAt>" }`). `DELETE accounts/:id` records one; the
+ * primary exports its set, replicas merge it with their own, remove local files
+ * the tombstones cover, and push their own tombstones back. A file stamped
+ * strictly later than a tombstone is a re-creation and wins; the tombstone is
+ * dropped. Tombstones expire after 30 days.
  *
  * Every entry crosses the wire encrypted with a key both sides derive from a
  * shared secret (`CliProxySyncCrypto.ts`). The replica authenticates to the
@@ -21,6 +28,7 @@ import {
   CliProxySyncFailedError,
   CliProxySyncPushResult,
   type CliProxySyncStatus,
+  type CliProxySyncTombstone,
 } from "@q1code/core/cliproxyApi";
 import {
   CLIPROXY_SYNC_DEFAULT_INTERVAL_SECONDS,
@@ -64,6 +72,8 @@ import {
 export const SYNC_TOKEN_ENV = "Q1CODE_CLIPROXY_SYNC_TOKEN";
 export const SYNC_KEY_ENV = "Q1CODE_CLIPROXY_SYNC_KEY";
 
+export const SYNC_TOMBSTONE_TTL_MILLIS = 30 * 24 * 60 * 60 * 1000;
+
 /** Sync has no usable configuration for the requested role. The message never names a secret value. */
 export class CliProxySyncNotConfigured extends Schema.TaggedErrorClass<CliProxySyncNotConfigured>()(
   "CliProxySyncNotConfigured",
@@ -79,37 +89,85 @@ export interface SyncStamp {
   readonly updatedAt: string;
 }
 
+export type SyncTombstone = CliProxySyncTombstone;
+
+/** One side of a merge: its files by stamp and the deletions it knows about. */
+export interface SyncSide {
+  readonly files: ReadonlyArray<SyncStamp>;
+  readonly tombstones?: ReadonlyArray<SyncTombstone> | undefined;
+}
+
 export interface SyncPlan {
   /** Ids whose remote copy is newer than (or missing from) the local set. */
   readonly pull: ReadonlyArray<string>;
   /** Ids whose local copy is newer than (or missing from) the remote set. */
   readonly push: ReadonlyArray<string>;
+  /** Local files a tombstone covers: remove them. */
+  readonly deleteLocal: ReadonlyArray<string>;
+  /** Remote files a tombstone covers: the other side removes them once it sees `tombstones`. */
+  readonly deleteRemote: ReadonlyArray<string>;
+  /** Still in force after this merge: newest per id from both sides, minus those a newer file beat. Both sides keep this set. */
+  readonly tombstones: ReadonlyArray<SyncTombstone>;
 }
 
-const stampMillis = (stamp: SyncStamp): number => {
-  const millis = Date.parse(stamp.updatedAt);
+const isoMillis = (iso: string): number => {
+  const millis = Date.parse(iso);
   return Number.isFinite(millis) ? millis : 0;
 };
 
-/** Pure: newer wins on each side, equal stamps move nowhere. */
-export const planSyncMerge = (
-  local: ReadonlyArray<SyncStamp>,
-  remote: ReadonlyArray<SyncStamp>,
-): SyncPlan => {
-  const localById = new Map(local.map((stamp) => [stamp.id, stampMillis(stamp)]));
-  const remoteById = new Map(remote.map((stamp) => [stamp.id, stampMillis(stamp)]));
+/**
+ * Pure: newer wins on each side, equal stamps move nowhere. A tombstone beats
+ * every file stamped at or before its `deletedAt` on either side; a file
+ * stamped strictly later beats the tombstone (a re-creation).
+ */
+export const planSyncMerge = (local: SyncSide, remote: SyncSide): SyncPlan => {
+  const localById = new Map(local.files.map((stamp) => [stamp.id, isoMillis(stamp.updatedAt)]));
+  const remoteById = new Map(remote.files.map((stamp) => [stamp.id, isoMillis(stamp.updatedAt)]));
+  const newestTombstone = new Map<string, string>();
+  for (const tombstone of [...(local.tombstones ?? []), ...(remote.tombstones ?? [])]) {
+    const known = newestTombstone.get(tombstone.id);
+    if (known === undefined || isoMillis(tombstone.deletedAt) > isoMillis(known)) {
+      newestTombstone.set(tombstone.id, tombstone.deletedAt);
+    }
+  }
+  const deleteLocal: Array<string> = [];
+  const deleteRemote: Array<string> = [];
+  const tombstones: Array<SyncTombstone> = [];
+  for (const [id, deletedAt] of [...newestTombstone].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    const deletedMillis = isoMillis(deletedAt);
+    const localMillis = localById.get(id);
+    const remoteMillis = remoteById.get(id);
+    const beaten =
+      (localMillis !== undefined && localMillis > deletedMillis) ||
+      (remoteMillis !== undefined && remoteMillis > deletedMillis);
+    if (beaten) continue;
+    tombstones.push({ id, deletedAt });
+    if (localMillis !== undefined) deleteLocal.push(id);
+    if (remoteMillis !== undefined) deleteRemote.push(id);
+  }
+  const buried = new Set(tombstones.map((tombstone) => tombstone.id));
   const pull: Array<string> = [];
   const push: Array<string> = [];
   for (const [id, remoteMillis] of remoteById) {
+    if (buried.has(id)) continue;
     const localMillis = localById.get(id);
     if (localMillis === undefined || remoteMillis > localMillis) pull.push(id);
   }
   for (const [id, localMillis] of localById) {
+    if (buried.has(id)) continue;
     const remoteMillis = remoteById.get(id);
     if (remoteMillis === undefined || localMillis > remoteMillis) push.push(id);
   }
-  return { pull, push };
+  return { pull, push, deleteLocal, deleteRemote, tombstones };
 };
+
+/** Pure: drop tombstones older than the TTL; nothing that old can still be waiting on a replica. */
+export const pruneSyncTombstones = (
+  tombstones: ReadonlyArray<SyncTombstone>,
+  nowMillis: number,
+  ttlMillis: number = SYNC_TOMBSTONE_TTL_MILLIS,
+): ReadonlyArray<SyncTombstone> =>
+  tombstones.filter((tombstone) => isoMillis(tombstone.deletedAt) > nowMillis - ttlMillis);
 
 export interface CliProxySyncTransportInput {
   readonly primaryUrl: string;
@@ -124,7 +182,10 @@ export class CliProxySyncTransport extends Context.Service<
       input: CliProxySyncTransportInput,
     ) => Effect.Effect<CliProxySyncBundle, CliProxySyncFailedError>;
     readonly push: (
-      input: CliProxySyncTransportInput & { readonly entries: ReadonlyArray<CliProxySyncEntry> },
+      input: CliProxySyncTransportInput & {
+        readonly entries: ReadonlyArray<CliProxySyncEntry>;
+        readonly tombstones: ReadonlyArray<SyncTombstone>;
+      },
     ) => Effect.Effect<CliProxySyncPushResult, CliProxySyncFailedError>;
   }
 >()("t3/fork/cliproxy/CliProxySync/CliProxySyncTransport") {}
@@ -142,14 +203,17 @@ export class CliProxySyncService extends Context.Service<
     readonly status: Effect.Effect<CliProxySyncStatus>;
     /** Emits the status after every replica cycle, success or failure. */
     readonly changes: Stream.Stream<CliProxySyncStatus>;
-    /** Primary: every auth file, encrypted, stamped with its mtime. */
+    /** Primary: every auth file, encrypted, stamped with its mtime, plus the live tombstones. */
     readonly exportBundle: Effect.Effect<CliProxySyncBundle, CliProxySyncError>;
-    /** Primary: decrypt and write the entries that are newer than the local copies. */
+    /** Primary: decrypt and write the entries that are newer than the local copies; apply and keep the tombstones. */
     readonly applyPush: (
       entries: ReadonlyArray<CliProxySyncEntry>,
+      tombstones?: ReadonlyArray<SyncTombstone>,
     ) => Effect.Effect<CliProxySyncPushResult, CliProxySyncError>;
     /** Replica: one pull-then-push cycle against the primary. */
     readonly syncNow: Effect.Effect<void, CliProxySyncError>;
+    /** Any role: remember that `id` was deleted here, so the deletion reaches the other environments. */
+    readonly recordTombstone: (id: string) => Effect.Effect<void, CliProxySyncFailedError>;
   }
 >()("t3/fork/cliproxy/CliProxySync/CliProxySyncService") {}
 
@@ -166,6 +230,19 @@ const isAuthFileName = (name: string) => name.endsWith(".json") && !name.startsW
 const EPOCH_ISO = "1970-01-01T00:00:00.000Z";
 
 const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+const nowMillis = DateTime.now.pipe(Effect.map(DateTime.toEpochMillis));
+
+/** On disk: `{ "<auth file>": "<deletedAt>" }`. */
+const TombstoneFile = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+const decodeTombstoneFile = Schema.decodeUnknownExit(TombstoneFile);
+const encodeTombstoneFile = Schema.encodeSync(TombstoneFile);
+
+const sameTombstones = (left: ReadonlyArray<SyncTombstone>, right: ReadonlyArray<SyncTombstone>) =>
+  left.length === right.length &&
+  left.every((tombstone, index) => {
+    const other = right[index];
+    return other?.id === tombstone.id && other.deletedAt === tombstone.deletedAt;
+  });
 
 const trimOrigin = (url: string) => url.replace(/\/+$/, "");
 
@@ -185,7 +262,7 @@ const make = Effect.gen(function* () {
   const ticker = yield* CliProxySyncTicker;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { authsDir } = cliproxyDirectories(config.baseDir, path);
+  const { rootDir, authsDir, tombstonesPath } = cliproxyDirectories(config.baseDir, path);
 
   const lastSyncRef = yield* Ref.make<{ at?: string; error?: string }>({});
   const changesPubSub = yield* PubSub.unbounded<CliProxySyncStatus>();
@@ -289,6 +366,64 @@ const make = Effect.gen(function* () {
       yield* fs.utimes(target, stampSeconds, stampSeconds);
     }).pipe(Effect.mapError(ioError(`write ${id}`)));
 
+  const removeEntry = (id: string) =>
+    fs.remove(path.join(authsDir, id)).pipe(
+      Effect.catch((error) =>
+        error.reason._tag === "NotFound" ? Effect.void : Effect.fail(error),
+      ),
+      Effect.mapError(ioError(`remove ${id}`)),
+    );
+
+  /** Expired tombstones are dropped on read, so nothing depends on a separate sweep. */
+  const readTombstones: Effect.Effect<
+    ReadonlyArray<SyncTombstone>,
+    CliProxySyncFailedError
+  > = Effect.gen(function* () {
+    const exists = yield* fs.exists(tombstonesPath).pipe(Effect.orElseSucceed(() => false));
+    if (!exists) return [];
+    const text = yield* fs
+      .readFileString(tombstonesPath)
+      .pipe(Effect.mapError(ioError("read tombstones")));
+    const decoded = decodeTombstoneFile(text);
+    if (Exit.isFailure(decoded)) {
+      return yield* new CliProxySyncFailedError({
+        reason: "io",
+        message: `tombstones.json is not a { "<auth file>": "<deletedAt>" } object`,
+      });
+    }
+    const tombstones = Object.entries(decoded.value)
+      .map(([id, deletedAt]): SyncTombstone => ({ id, deletedAt }))
+      .sort((a, b) => (a.id < b.id ? -1 : 1));
+    return pruneSyncTombstones(tombstones, yield* nowMillis);
+  });
+
+  const writeTombstones = (tombstones: ReadonlyArray<SyncTombstone>) =>
+    Effect.gen(function* () {
+      const temp = path.join(rootDir, ".tombstones.json.tmp");
+      const contents = `${encodeTombstoneFile(
+        Object.fromEntries(tombstones.map((tombstone) => [tombstone.id, tombstone.deletedAt])),
+      )}\n`;
+      yield* fs.makeDirectory(rootDir, { recursive: true });
+      yield* fs.writeFileString(temp, contents);
+      yield* fs.rename(temp, tombstonesPath);
+    }).pipe(Effect.mapError(ioError("write tombstones")));
+
+  const writeTombstonesIfChanged = (
+    previous: ReadonlyArray<SyncTombstone>,
+    next: ReadonlyArray<SyncTombstone>,
+  ) => (sameTombstones(previous, next) ? Effect.void : writeTombstones(next));
+
+  const recordTombstone = (id: string) =>
+    Effect.gen(function* () {
+      const known = yield* readTombstones;
+      const deletedAt = yield* nowIso;
+      const merged = planSyncMerge(
+        { files: [], tombstones: known },
+        { files: [], tombstones: [{ id, deletedAt }] },
+      ).tombstones;
+      yield* writeTombstones(merged);
+    });
+
   const decryptAll = (key: SyncKey, entries: ReadonlyArray<CliProxySyncEntry>) =>
     Effect.forEach(entries, (entry) =>
       decryptSyncEntry(key, entry.ciphertext).pipe(
@@ -307,21 +442,33 @@ const make = Effect.gen(function* () {
     const resolved = yield* requireRole("primary");
     const local = yield* listLocal;
     const entries = yield* Effect.forEach(local, (stamp) => readEntry(resolved.key, stamp));
+    const tombstones = yield* readTombstones;
     const primaryEnvironmentId = yield* identity.getEnvironmentId;
     return {
-      version: 1,
+      version: 2,
       generatedAt: yield* nowIso,
       primaryEnvironmentId,
       entries,
+      tombstones,
     } satisfies CliProxySyncBundle;
   });
 
-  const applyPush = (entries: ReadonlyArray<CliProxySyncEntry>) =>
+  const applyPush = (
+    entries: ReadonlyArray<CliProxySyncEntry>,
+    tombstones: ReadonlyArray<SyncTombstone> = [],
+  ) =>
     Effect.gen(function* () {
       const resolved = yield* requireRole("primary");
       const decrypted = yield* decryptAll(resolved.key, entries);
       const local = yield* listLocal;
-      const plan = planSyncMerge(local, entries);
+      const known = yield* readTombstones;
+      const plan = planSyncMerge(
+        { files: local, tombstones: known },
+        { files: entries, tombstones },
+      );
+      for (const id of plan.deleteLocal) {
+        yield* removeEntry(id);
+      }
       const pull = new Set(plan.pull);
       const written: Array<string> = [];
       const skipped: Array<string> = [];
@@ -333,7 +480,8 @@ const make = Effect.gen(function* () {
           skipped.push(entry.id);
         }
       }
-      return { written, skipped } satisfies CliProxySyncPushResult;
+      yield* writeTombstonesIfChanged(known, plan.tombstones);
+      return { written, skipped, deleted: plan.deleteLocal } satisfies CliProxySyncPushResult;
     });
 
   const status = Effect.gen(function* () {
@@ -365,7 +513,14 @@ const make = Effect.gen(function* () {
       const target = { primaryUrl: resolved.primaryUrl, token: resolved.token };
       const bundle = yield* transport.fetchExport(target);
       const local = yield* listLocal;
-      const plan = planSyncMerge(local, bundle.entries);
+      const known = yield* readTombstones;
+      const plan = planSyncMerge(
+        { files: local, tombstones: known },
+        { files: bundle.entries, tombstones: bundle.tombstones ?? [] },
+      );
+      for (const id of plan.deleteLocal) {
+        yield* removeEntry(id);
+      }
       const remoteById = new Map(bundle.entries.map((entry) => [entry.id, entry]));
       const pulled = yield* decryptAll(
         resolved.key,
@@ -385,13 +540,18 @@ const make = Effect.gen(function* () {
         }),
         (stamp) => readEntry(resolved.key, stamp),
       );
-      if (pushes.length > 0) {
-        yield* transport.push({ ...target, entries: pushes });
+      // The primary learns a replica-side deletion only through a push, so a
+      // cycle with nothing to write still pushes when a tombstone covers a
+      // primary file.
+      if (pushes.length > 0 || plan.deleteRemote.length > 0) {
+        yield* transport.push({ ...target, entries: pushes, tombstones: plan.tombstones });
       }
+      yield* writeTombstonesIfChanged(known, plan.tombstones);
       yield* Ref.set(lastSyncRef, { at: yield* nowIso });
       yield* Effect.logInfo("cliproxy sync: cycle complete", {
         pulled: pulled.length,
         pushed: pushes.length,
+        deleted: plan.deleteLocal.length,
       });
     }).pipe(
       Effect.tapError((error) =>
@@ -446,6 +606,7 @@ const make = Effect.gen(function* () {
     exportBundle,
     applyPush,
     syncNow,
+    recordTombstone,
   });
 });
 
@@ -479,7 +640,11 @@ export const transportLayer = Layer.succeed(
                 Authorization: `Bearer ${input.token}`,
                 "content-type": "application/json",
               },
-            }).pipe(HttpClientRequest.bodyText(JSON.stringify({ entries: input.entries }))),
+            }).pipe(
+              HttpClientRequest.bodyText(
+                JSON.stringify({ entries: input.entries, tombstones: input.tombstones }),
+              ),
+            ),
           ),
         ),
         Effect.flatMap(HttpClientResponse.schemaBodyJson(CliProxySyncPushResult)),
