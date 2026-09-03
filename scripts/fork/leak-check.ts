@@ -8,13 +8,10 @@
 // identifier, or when a commit message still carries fork trailers. Prints
 // every hit as `<sha> <file>:<line>: <needle>: <text>`. Dependency-free.
 import * as NodeChildProcess from "node:child_process";
-import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 
-const repoRoot = NodePath.resolve(
-  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
-  "../..",
-);
+// Run git in the checkout the command was started from (a worktree of the fork
+// counts), not where this script file happens to live.
+const repoRoot = process.cwd();
 
 const diffNeedles: ReadonlyArray<string> = [
   "@q1code/",
