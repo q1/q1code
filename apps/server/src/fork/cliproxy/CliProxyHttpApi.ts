@@ -13,6 +13,7 @@
  */
 import {
   type CliProxyAccount,
+  type CliProxyAccountUsage,
   CliProxyConfigError,
   CliProxyHttpApi,
   type CliProxyLoginStatus,
@@ -60,6 +61,15 @@ const AuthFileEntry = Schema.Struct({
   weight: Schema.optionalKey(Schema.Number),
   modtime: Schema.optionalKey(Schema.String),
   updated_at: Schema.optionalKey(Schema.String),
+  // Counters and quota observations (`buildAuthFileEntry` in the sidecar); absent from disk-only listings.
+  success: Schema.optionalKey(Schema.Number),
+  failed: Schema.optionalKey(Schema.Number),
+  quota: Schema.optionalKey(
+    Schema.Struct({
+      observed_at: Schema.optionalKey(Schema.String),
+      signals: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+    }),
+  ),
 });
 const AuthFilesResponse = Schema.Struct({ files: Schema.Array(AuthFileEntry) });
 const OAuthStartResponse = Schema.Struct({
@@ -96,6 +106,22 @@ const toIso = (value: string | undefined): string | undefined => {
   if (value === undefined) return undefined;
   const millis = Date.parse(value);
   return Number.isFinite(millis) ? DateTime.formatIso(DateTime.makeUnsafe(millis)) : undefined;
+};
+
+/** Counters only when the sidecar reports them; quota only when it observed something. */
+const toUsage = (entry: typeof AuthFileEntry.Type): CliProxyAccountUsage | undefined => {
+  if (entry.success === undefined || entry.failed === undefined) return undefined;
+  const observedAt = toIso(entry.quota?.observed_at);
+  const signals = entry.quota?.signals ?? {};
+  const quota =
+    observedAt !== undefined || Object.keys(signals).length > 0
+      ? { ...(observedAt !== undefined ? { observedAt } : {}), signals }
+      : undefined;
+  return {
+    success: entry.success,
+    failed: entry.failed,
+    ...(quota !== undefined ? { quota } : {}),
+  };
 };
 
 interface LoginSession {
@@ -214,6 +240,7 @@ export const cliProxyHttpApiLayer = HttpApiBuilder.group(
           toIso(entry.modtime) ??
           Option.getOrUndefined(yield* fileMtime(entry.name)) ??
           DateTime.formatIso(yield* DateTime.now);
+        const usage = toUsage(entry);
         return {
           id: entry.name,
           provider,
@@ -222,6 +249,7 @@ export const cliProxyHttpApiLayer = HttpApiBuilder.group(
           disabled: entry.disabled ?? false,
           ...(entry.weight !== undefined ? { weight: entry.weight } : {}),
           updatedAt,
+          ...(usage !== undefined ? { usage } : {}),
         } satisfies CliProxyAccount;
       });
 
