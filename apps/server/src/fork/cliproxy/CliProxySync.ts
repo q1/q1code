@@ -14,9 +14,11 @@
  *
  * Every entry crosses the wire encrypted with a key both sides derive from a
  * shared secret (`CliProxySyncCrypto.ts`). The replica authenticates to the
- * primary with an admin-scoped bearer token. Both secrets come from the
- * environment (`Q1CODE_CLIPROXY_SYNC_TOKEN`, `Q1CODE_CLIPROXY_SYNC_KEY`) or
- * from the server secret store under the names in `fork.json`.
+ * primary with an admin-scoped bearer token. Both secrets are read from the
+ * server secret store first (the names in `fork.json`, defaulting to
+ * `cliproxy-sync-token` / `cliproxy-sync-key`; put them there with
+ * `q1code fork secret set <name>`), then from the environment
+ * (`Q1CODE_CLIPROXY_SYNC_TOKEN`, `Q1CODE_CLIPROXY_SYNC_KEY`).
  *
  * The transport and the ticker are services so tests wire two sync services
  * together in memory and drive the loop without a clock.
@@ -32,6 +34,8 @@ import {
 } from "@q1code/core/cliproxyApi";
 import {
   CLIPROXY_SYNC_DEFAULT_INTERVAL_SECONDS,
+  CLIPROXY_SYNC_DEFAULT_KEY_SECRET_NAME,
+  CLIPROXY_SYNC_DEFAULT_TOKEN_SECRET_NAME,
   type CliProxySyncConfig,
 } from "@q1code/core/config";
 import * as Context from "effect/Context";
@@ -222,6 +226,7 @@ interface ResolvedSync {
   readonly key: SyncKey;
   readonly primaryUrl: string | undefined;
   readonly token: string | undefined;
+  readonly tokenSecretName: string;
   readonly interval: Duration.Duration;
 }
 
@@ -274,15 +279,18 @@ const make = Effect.gen(function* () {
 
   const section = flags.config.pipe(Effect.map((forkConfig) => forkConfig.cliproxy?.sync));
 
-  const readSecret = (envName: string, storeName: string | undefined) =>
+  /** Store first, environment second; an empty value in either counts as absent. */
+  const readSecret = (storeName: string, envName: string) =>
     Effect.gen(function* () {
-      const fromEnv = env[envName]?.trim();
-      if (fromEnv) return fromEnv;
-      if (storeName === undefined) return undefined;
       const stored = yield* secrets
         .get(storeName)
         .pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
-      return Option.isSome(stored) ? new TextDecoder().decode(stored.value).trim() : undefined;
+      const fromStore = Option.isSome(stored)
+        ? new TextDecoder().decode(stored.value).trim()
+        : undefined;
+      if (fromStore) return fromStore;
+      const fromEnv = env[envName]?.trim();
+      return fromEnv || undefined;
     });
 
   const resolve = Effect.gen(function* () {
@@ -290,18 +298,23 @@ const make = Effect.gen(function* () {
     if (sync === undefined) {
       return yield* new CliProxySyncNotConfigured({ message: "fork.json has no cliproxy.sync" });
     }
-    const sharedSecret = yield* readSecret(SYNC_KEY_ENV, sync.sharedKeySecretName);
-    if (sharedSecret === undefined || sharedSecret.length === 0) {
+    const keySecretName = sync.sharedKeySecretName ?? CLIPROXY_SYNC_DEFAULT_KEY_SECRET_NAME;
+    const sharedSecret = yield* readSecret(keySecretName, SYNC_KEY_ENV);
+    if (sharedSecret === undefined) {
       return yield* new CliProxySyncNotConfigured({
-        message: `no shared key (${SYNC_KEY_ENV} or cliproxy.sync.sharedKeySecretName)`,
+        message: `no shared key (secret '${keySecretName}' or ${SYNC_KEY_ENV})`,
       });
     }
-    const token = yield* readSecret(SYNC_TOKEN_ENV, sync.tokenSecretName);
+    const token = yield* readSecret(
+      sync.tokenSecretName ?? CLIPROXY_SYNC_DEFAULT_TOKEN_SECRET_NAME,
+      SYNC_TOKEN_ENV,
+    );
     const resolved: ResolvedSync = {
       role: sync.role,
       key: deriveSyncKey(sharedSecret),
       primaryUrl: sync.primaryUrl === undefined ? undefined : trimOrigin(sync.primaryUrl),
       token,
+      tokenSecretName: sync.tokenSecretName ?? CLIPROXY_SYNC_DEFAULT_TOKEN_SECRET_NAME,
       interval: Duration.seconds(sync.intervalSeconds ?? CLIPROXY_SYNC_DEFAULT_INTERVAL_SECONDS),
     };
     return resolved;
@@ -507,7 +520,7 @@ const make = Effect.gen(function* () {
       const resolved = yield* requireRole("replica");
       if (resolved.primaryUrl === undefined || resolved.token === undefined) {
         return yield* new CliProxySyncNotConfigured({
-          message: `replica needs cliproxy.sync.primaryUrl and ${SYNC_TOKEN_ENV}`,
+          message: `replica needs cliproxy.sync.primaryUrl and a token (secret '${resolved.tokenSecretName}' or ${SYNC_TOKEN_ENV})`,
         });
       }
       const target = { primaryUrl: resolved.primaryUrl, token: resolved.token };
