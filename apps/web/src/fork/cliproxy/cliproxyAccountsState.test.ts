@@ -4,6 +4,7 @@ import {
   IDLE_LOGIN_FLOW,
   type CliProxyLoginFlowState,
   describeCliProxyUnavailable,
+  describeCliProxyAccountQuota,
   flattenCliProxyUsage,
   labelCliProxyUsageCredential,
   parseCliProxyWeight,
@@ -196,5 +197,20 @@ describe("cliproxy label helpers", () => {
       { id: "openai:1", provider: "openai", credential: "API key 2", success: 0, failed: 2 },
     ]);
     expect(JSON.stringify(rows)).not.toContain("sk-");
+  });
+
+  it("describes an account's quota signals only when the sidecar observed some", () => {
+    expect(describeCliProxyAccountQuota(undefined)).toBeUndefined();
+    expect(describeCliProxyAccountQuota({ success: 1, failed: 0 })).toBeUndefined();
+    expect(
+      describeCliProxyAccountQuota({ success: 1, failed: 0, quota: { signals: {} } }),
+    ).toBeUndefined();
+    expect(
+      describeCliProxyAccountQuota({
+        success: 1,
+        failed: 0,
+        quota: { observedAt: "2026-09-02T00:00:00.000Z", signals: { "5h": "ok", "7d": "low" } },
+      }),
+    ).toBe("Quota 5h: ok, 7d: low");
   });
 });
