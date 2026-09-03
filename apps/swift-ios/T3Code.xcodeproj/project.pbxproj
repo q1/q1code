@@ -160,6 +160,7 @@
 				A10000000000000000000006 /* Tests */,
 				C30000000000000000000001 /* Extensions */,
 				D40000000000000000000001 /* GhosttyKit.xcframework */,
+				E40000000000000000000001 /* T3Code.xcconfig */,
 				A30000000000000000000002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -497,6 +498,7 @@
 /* Begin XCBuildConfiguration section */
 		AB0000000000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E40000000000000000000001 /* T3Code.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -558,6 +560,7 @@
 		};
 		AB0000000000000000000002 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E40000000000000000000001 /* T3Code.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -621,7 +624,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "T3 Swift Dev";
+				INFOPLIST_KEY_CFBundleDisplayName = "$(T3CODE_DEBUG_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan pairing QR codes and attach photos to T3 Code tasks.";
@@ -653,14 +656,14 @@
 					"-framework",
 					QuartzCore,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.dev;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(T3CODE_BUNDLE_IDENTIFIER_PREFIX).dev";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui.dev;
+				T3CODE_APP_GROUP_IDENTIFIER = "group.$(T3CODE_BUNDLE_IDENTIFIER_PREFIX).dev";
 				T3CODE_URL_SCHEME = t3code-swiftui-dev;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -677,7 +680,7 @@
 				CURRENT_PROJECT_VERSION = 40;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "T3 Code SwiftUI";
+				INFOPLIST_KEY_CFBundleDisplayName = "$(T3CODE_RELEASE_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan pairing QR codes and attach photos to T3 Code tasks.";
@@ -709,7 +712,7 @@
 					"-framework",
 					QuartzCore,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(T3CODE_BUNDLE_IDENTIFIER_PREFIX)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -717,7 +720,7 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui;
+				T3CODE_APP_GROUP_IDENTIFIER = "group.$(T3CODE_BUNDLE_IDENTIFIER_PREFIX)";
 				T3CODE_URL_SCHEME = t3code-swiftui;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
@@ -731,7 +734,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(T3CODE_BUNDLE_IDENTIFIER_PREFIX).tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -748,7 +751,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(T3CODE_BUNDLE_IDENTIFIER_PREFIX).tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -775,7 +778,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.dev.widgets;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(T3CODE_BUNDLE_IDENTIFIER_PREFIX).dev.widgets";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -783,7 +786,7 @@
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui.dev;
+				T3CODE_APP_GROUP_IDENTIFIER = "group.$(T3CODE_BUNDLE_IDENTIFIER_PREFIX).dev";
 				T3CODE_WIDGET_DISPLAY_NAME = "T3 Swift Dev Widgets";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -806,7 +809,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.widgets;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(T3CODE_BUNDLE_IDENTIFIER_PREFIX).widgets";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -815,7 +818,7 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui;
+				T3CODE_APP_GROUP_IDENTIFIER = "group.$(T3CODE_BUNDLE_IDENTIFIER_PREFIX)";
 				T3CODE_WIDGET_DISPLAY_NAME = "T3 Code Widgets";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
@@ -839,7 +842,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.dev.sharing;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(T3CODE_BUNDLE_IDENTIFIER_PREFIX).dev.sharing";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -847,7 +850,7 @@
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui.dev;
+				T3CODE_APP_GROUP_IDENTIFIER = "group.$(T3CODE_BUNDLE_IDENTIFIER_PREFIX).dev";
 				T3CODE_SHARE_DISPLAY_NAME = "T3 Swift Dev";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -870,7 +873,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.sharing;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(T3CODE_BUNDLE_IDENTIFIER_PREFIX).sharing";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -879,7 +882,7 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui;
+				T3CODE_APP_GROUP_IDENTIFIER = "group.$(T3CODE_BUNDLE_IDENTIFIER_PREFIX)";
 				T3CODE_SHARE_DISPLAY_NAME = "T3 Code (SwiftUI)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
@@ -993,6 +996,7 @@
 		C40000000000000000000010 /* T3CodeShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = T3CodeShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C40000000000000000000011 /* ExtensionContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionContractTests.swift; sourceTree = "<group>"; };
 		D40000000000000000000001 /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = GhosttyKit.xcframework; path = ../mobile/modules/t3-terminal/Vendor/libghostty/GhosttyKit.xcframework; sourceTree = "<group>"; };
+		E40000000000000000000001 /* T3Code.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = T3Code.xcconfig; path = Config/T3Code.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 	};
 	rootObject = A90000000000000000000001 /* Project object */;
