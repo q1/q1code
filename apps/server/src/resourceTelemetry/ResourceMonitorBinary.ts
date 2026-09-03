@@ -203,10 +203,16 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
       if (platform !== "win32") {
         const stat = yield* fileSystem.stat(candidate).pipe(Effect.option);
         if (Option.isSome(stat) && (stat.value.mode & 0o111) === 0) {
-          return yield* new ResourceMonitorBinaryNotExecutable({
-            path: candidate,
-            mode: stat.value.mode,
-          });
+          // Packed tarballs drop the executable bit, so restore it once before giving up.
+          const restored = yield* fileSystem
+            .chmod(candidate, 0o755)
+            .pipe(Effect.andThen(fileSystem.stat(candidate)), Effect.option);
+          if (Option.isNone(restored) || (restored.value.mode & 0o111) === 0) {
+            return yield* new ResourceMonitorBinaryNotExecutable({
+              path: candidate,
+              mode: stat.value.mode,
+            });
+          }
         }
       }
 
