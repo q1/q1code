@@ -112,6 +112,8 @@ export function describeCliProxyCallError(error: CliProxyCallError): string {
       return `CLIProxyAPI answered ${error.status}: ${error.message}`;
     case "CliProxyNotFoundError":
       return error.message;
+    case "CliProxyConfigError":
+      return error.message;
     case "CliProxySyncFailedError":
       return error.message;
     case "EnvironmentScopeRequiredError":

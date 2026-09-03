@@ -32,6 +32,19 @@ const writeForkConfig = (contents: string) =>
     yield* fs.writeFileString(ForkFlags.forkConfigPath(stateDir, path), contents);
   });
 
+const readForkConfigText = Effect.gen(function* () {
+  const { stateDir } = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fs.readFileString(ForkFlags.forkConfigPath(stateDir, path));
+});
+
+const listStateDir = Effect.gen(function* () {
+  const { stateDir } = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readDirectory(stateDir);
+});
+
 it.layer(NodeServices.layer)("ForkFlags", (it) => {
   it.effect("resolves registry defaults when fork.json is missing", () =>
     Effect.gen(function* () {
@@ -89,6 +102,75 @@ it.layer(NodeServices.layer)("ForkFlags", (it) => {
         flags: { cliproxy: true },
         cliproxy: { port: 9001 },
       });
+    }).pipe(Effect.provide(makeLayers())),
+  );
+
+  it.effect("update rewrites one key, keeps unknown keys and formatting, and re-reads", () =>
+    Effect.gen(function* () {
+      const flags = yield* ForkFlags.ForkFlagsService;
+      yield* writeForkConfig(
+        '{"flags":{"cliproxy":true},"cliproxy":{"port":9001},"private":{"host":"x"}}',
+      );
+      yield* flags.reload;
+      const config = yield* flags.update((raw) => ({
+        ...raw,
+        cliproxy: { ...(raw.cliproxy as object), routingStrategy: "fill-first" },
+      }));
+      assert.deepEqual(config, {
+        flags: { cliproxy: true },
+        cliproxy: { port: 9001, routingStrategy: "fill-first" },
+      });
+      assert.deepEqual(yield* flags.config, config);
+      assert.equal(
+        yield* readForkConfigText,
+        [
+          "{",
+          '  "flags": {',
+          '    "cliproxy": true',
+          "  },",
+          '  "cliproxy": {',
+          '    "port": 9001,',
+          '    "routingStrategy": "fill-first"',
+          "  },",
+          '  "private": {',
+          '    "host": "x"',
+          "  }",
+          "}",
+          "",
+        ].join("\n"),
+      );
+      assert.deepEqual(
+        (yield* listStateDir).filter((name) => name.startsWith("fork.json")),
+        ["fork.json"],
+      );
+    }).pipe(Effect.provide(makeLayers())),
+  );
+
+  it.effect("update creates the file when it is missing and moves flags", () =>
+    Effect.gen(function* () {
+      const flags = yield* ForkFlags.ForkFlagsService;
+      const first = yield* flags.changes.pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
+      yield* flags.update((raw) => ({ ...raw, flags: { cliproxy: true } }));
+      const [emitted] = yield* Fiber.join(first);
+      assert.strictEqual(emitted?.cliproxy, true);
+      assert.strictEqual((yield* flags.current).cliproxy, true);
+    }).pipe(Effect.provide(makeLayers())),
+  );
+
+  it.effect("update refuses a malformed file and an invalid result, touching nothing", () =>
+    Effect.gen(function* () {
+      const flags = yield* ForkFlags.ForkFlagsService;
+      yield* writeForkConfig("{not json");
+      const malformed = yield* flags.update((raw) => raw).pipe(Effect.flip);
+      assert.strictEqual(malformed.reason, "malformed");
+      assert.equal(yield* readForkConfigText, "{not json");
+
+      yield* writeForkConfig('{"cliproxy":{"port":1}}');
+      const invalid = yield* flags
+        .update((raw) => ({ ...raw, cliproxy: { port: 70000 } }))
+        .pipe(Effect.flip);
+      assert.strictEqual(invalid.reason, "invalid");
+      assert.equal(yield* readForkConfigText, '{"cliproxy":{"port":1}}');
     }).pipe(Effect.provide(makeLayers())),
   );
 
