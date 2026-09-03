@@ -48,8 +48,8 @@
       "default": "./src/codexMarkdownDirectives.ts"
     },
     "./fork": {
-      "types": "./src/fork/forkFlags.ts",
-      "default": "./src/fork/forkFlags.ts"
+      "types": "./src/fork/index.ts",
+      "default": "./src/fork/index.ts"
     },
     "./errors": {
       "types": "./src/errors/index.ts",
