@@ -36,7 +36,7 @@ cd "$repo"
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not a git checkout: $repo"
 [[ -z "$(git status --porcelain --untracked-files=no)" ]] || die "working tree has uncommitted changes"
 git remote get-url "$upstream" >/dev/null 2>&1 || die "missing remote '$upstream'"
-git rev-parse --verify -q refs/heads/main >/dev/null || die "no local branch 'main'"
+git rev-parse --verify -q refs/heads/main >/dev/null || git branch main "$upstream/main" >/dev/null 2>&1 || git branch main origin/main >/dev/null 2>&1 || die "no local branch 'main' and nothing to create it from"
 git rev-parse --verify -q refs/heads/fork >/dev/null || die "no local branch 'fork'"
 command -v node >/dev/null 2>&1 || die "node is required"
 
