@@ -54,6 +54,7 @@ const makeFlags = (initial: boolean, config: ForkConfig = {}) => {
         reload: Effect.sync(() => current),
         changes: Stream.fromPubSub(pubsub),
         config: Effect.succeed(config),
+        update: () => Effect.die("unexpected fork.json update"),
       });
     }),
   );

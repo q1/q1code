@@ -243,6 +243,19 @@ export class CliProxyNotFoundError extends Schema.TaggedErrorClass<CliProxyNotFo
   }
 }
 
+/** 500: a change the sidecar accepted could not be persisted into `fork.json`, so it would not survive a restart. */
+export class CliProxyConfigError extends Schema.TaggedErrorClass<CliProxyConfigError>()(
+  "CliProxyConfigError",
+  {
+    message: Schema.String,
+  },
+  { httpApiStatus: 500 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(CliProxyConfigError)(this, { status: 500 });
+  }
+}
+
 export const CliProxySyncFailureReason = Schema.Literals(["crypto", "io", "transport"]);
 export type CliProxySyncFailureReason = typeof CliProxySyncFailureReason.Type;
 
@@ -350,7 +363,7 @@ export class CliProxyHttpApiGroup extends HttpApiGroup.make("cliproxy")
       headers: OptionalBearerHeaders,
       payload: CliProxyRouting,
       success: CliProxyRouting,
-      error: ProxyErrors,
+      error: [...ProxyErrors, CliProxyConfigError],
     }),
   )
   .add(
