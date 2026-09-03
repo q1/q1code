@@ -12,6 +12,7 @@ import { primaryServerConfigAtom } from "~/state/server";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
 import { filterAvailableSettingsSearchItems } from "./settingsSearch";
+import { isForkSettingsSearchItemVisible } from "../../fork/forkSettingsSearch"; // fork: base
 
 export function useAvailableSettingsSearchItems() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -43,7 +44,7 @@ export function useAvailableSettingsSearchItems() {
         }),
         hasThreadAutoSettlement:
           primaryServerConfig?.environment.capabilities.threadAutoSettlement === true,
-      }),
+      }).filter(isForkSettingsSearchItemVisible(primaryServerConfig?.environment.capabilities)), // fork: base
     [
       canManageLocalBackend,
       desktopWsl.data,
