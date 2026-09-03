@@ -31,13 +31,16 @@ const forkOwnedPatterns: ReadonlyArray<RegExp> = [
   // Carried upstream PR #5178 (fork feature swift-ios, see fork/FEATURES.md).
   /^apps\/swift-ios\//,
   /^docs\/user\/swiftui-mobile\.md$/,
+  // The Prism settings route (fork feature cliproxy) lives in the upstream routes directory.
+  /^apps\/web\/src\/routes\/settings\.prism\.tsx$/,
 ];
 
 const markerPattern = /(?:\/\/|\/\*|#|<!--)\s*fork:/g;
 
 // Files where a `fork:` marker is impossible or pointless: JSON manifests, the
 // lockfile, tests adapted to fork literals, and markdown includes.
-const markerExemptPattern = /(?:\.test\.[cm]?[jt]sx?$|\.json$|pnpm-lock\.yaml$|\.md$)/;
+const markerExemptPattern =
+  /(?:\.test\.[cm]?[jt]sx?$|\.gen\.[cm]?[jt]sx?$|\.json$|pnpm-lock\.yaml$|\.md$)/;
 
 interface Options {
   readonly check: boolean;
