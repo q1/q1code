@@ -67,6 +67,7 @@ const flagsLayer = (config: ForkConfig, cliproxy = true) => {
       reload: Effect.succeed(values),
       changes: Stream.empty,
       config: Effect.succeed(config),
+      update: () => Effect.die("unexpected fork.json update"),
     }),
   );
 };

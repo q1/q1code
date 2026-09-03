@@ -6,11 +6,17 @@
  * warning per breakage, never a failure). The file is watched like
  * `serverSettings.ts` watches `settings.json`, so edits land without a restart.
  * Clients receive the resolved values through `ExecutionEnvironmentCapabilities.forkFlags`.
+ *
+ * `update` is the one writer: it edits the raw JSON so unknown keys survive,
+ * validates the result against the schema, writes temp + fsync + rename, and
+ * re-reads, so a feature that persists a setting (cliproxy routing) never
+ * clobbers what another feature or the user put in the file.
  */
 import {
   EMPTY_FORK_CONFIG,
   FORK_CONFIG_FILENAME,
   type ForkConfig,
+  decodeForkConfig,
   decodeForkConfigJson,
 } from "@q1code/core/config";
 import {
@@ -29,11 +35,29 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
+
+/** The file as JSON, before schema decoding: what `update` mutates so unknown keys are kept. */
+export type RawForkConfig = Readonly<Record<string, unknown>>;
+
+export class ForkConfigWriteError extends Schema.TaggedErrorClass<ForkConfigWriteError>()(
+  "ForkConfigWriteError",
+  {
+    path: Schema.String,
+    /** `malformed`: the file on disk is not a JSON object. `invalid`: the mutation broke the schema. `io`: the write failed. */
+    reason: Schema.Literals(["malformed", "invalid", "io"]),
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Failed to update ${this.path} (${this.reason}): ${this.detail}`;
+  }
+}
 
 export class ForkFlagsService extends Context.Service<
   ForkFlagsService,
@@ -46,6 +70,14 @@ export class ForkFlagsService extends Context.Service<
     readonly changes: Stream.Stream<ForkFlagValues>;
     /** The whole decoded `fork.json` as of the last reload (feature sections live next to `flags`). */
     readonly config: Effect.Effect<ForkConfig>;
+    /**
+     * Rewrite `fork.json` through `mutate` (raw JSON in, raw JSON out), keeping
+     * keys the schema does not know, then reload. Atomic: temp file, fsync,
+     * rename. A missing file starts from `{}`.
+     */
+    readonly update: (
+      mutate: (raw: RawForkConfig) => RawForkConfig,
+    ) => Effect.Effect<ForkConfig, ForkConfigWriteError>;
   }
 >()("t3/fork/ForkFlags/ForkFlagsService") {}
 
@@ -60,6 +92,9 @@ export const forkConfigPath = (stateDir: string, path: Path.Path) =>
 
 const sameFlags = (left: ForkFlagValues, right: ForkFlagValues) =>
   FORK_FLAG_KEYS.every((key) => left[key] === right[key]);
+
+const RawJsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+const decodeRawJsonObject = Schema.decodeUnknownExit(RawJsonObject);
 
 const make = Effect.gen(function* () {
   const { stateDir } = yield* ServerConfig.ServerConfig;
@@ -103,18 +138,68 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const reload = reloadSemaphore.withPermits(1)(
+  const reloadUnlocked = Effect.gen(function* () {
+    const fileConfig = yield* readFileConfig;
+    yield* Ref.set(configRef, fileConfig ?? EMPTY_FORK_CONFIG);
+    const next = resolveForkFlags({ env, file: fileConfig?.flags });
+    const previous = yield* Ref.getAndSet(valuesRef, next);
+    if (!sameFlags(previous, next)) {
+      yield* PubSub.publish(changesPubSub, next);
+    }
+    return next;
+  });
+
+  const reload = reloadSemaphore.withPermits(1)(reloadUnlocked);
+
+  const writeError = (reason: ForkConfigWriteError["reason"]) => (cause: unknown) =>
+    new ForkConfigWriteError({
+      path: configPath,
+      reason,
+      detail: cause instanceof Error ? cause.message : String(cause),
+    });
+
+  const readRaw: Effect.Effect<RawForkConfig, ForkConfigWriteError> = Effect.gen(function* () {
+    const exists = yield* fs.exists(configPath).pipe(Effect.mapError(writeError("io")));
+    if (!exists) return {};
+    const text = yield* fs.readFileString(configPath).pipe(Effect.mapError(writeError("io")));
+    const decoded = decodeRawJsonObject(text);
+    return Exit.isSuccess(decoded)
+      ? decoded.value
+      : yield* writeError("malformed")(Cause.squash(decoded.cause));
+  });
+
+  // Temp file in the same directory, fsync, rename: a crash mid-write leaves
+  // the old file intact, and the watcher only ever sees a complete file.
+  const writeRaw = (raw: RawForkConfig) =>
     Effect.gen(function* () {
-      const fileConfig = yield* readFileConfig;
-      yield* Ref.set(configRef, fileConfig ?? EMPTY_FORK_CONFIG);
-      const next = resolveForkFlags({ env, file: fileConfig?.flags });
-      const previous = yield* Ref.getAndSet(valuesRef, next);
-      if (!sameFlags(previous, next)) {
-        yield* PubSub.publish(changesPubSub, next);
-      }
-      return next;
-    }),
-  );
+      const tempPath = `${configPath}.${process.pid}.tmp`;
+      // Formatting is the point here: the user edits this file by hand.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const contents = `${JSON.stringify(raw, null, 2)}\n`;
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const file = yield* fs.open(tempPath, { flag: "w" });
+          yield* file.writeAll(new TextEncoder().encode(contents));
+          yield* file.sync;
+        }),
+      ).pipe(Effect.onError(() => fs.remove(tempPath).pipe(Effect.ignore)));
+      yield* fs.rename(tempPath, configPath);
+    }).pipe(Effect.mapError(writeError("io")));
+
+  const update = (mutate: (raw: RawForkConfig) => RawForkConfig) =>
+    reloadSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const next = mutate(yield* readRaw);
+        const validated = decodeForkConfig(next);
+        if (Exit.isFailure(validated)) {
+          return yield* writeError("invalid")(Cause.squash(validated.cause));
+        }
+        yield* writeRaw(next);
+        yield* reloadUnlocked;
+        return yield* Ref.get(configRef);
+      }),
+    );
 
   const startWatcher = Effect.gen(function* () {
     yield* fs.makeDirectory(stateDir, { recursive: true });
@@ -144,6 +229,7 @@ const make = Effect.gen(function* () {
     reload,
     changes: Stream.fromPubSub(changesPubSub),
     config: Ref.get(configRef),
+    update,
   });
 });
 
@@ -159,6 +245,7 @@ export const attachForkFlags = (
     capabilities: { ...descriptor.capabilities, forkFlags },
   }));
 
+/** Fixed flags and config; `update` applies the mutation in memory and answers the decoded result. */
 export const layerTest = (
   overrides: Partial<ForkFlagValues> = {},
   config: ForkConfig = EMPTY_FORK_CONFIG,
@@ -170,5 +257,17 @@ export const layerTest = (
       reload: Effect.succeed({ ...DEFAULT_FORK_FLAGS, ...overrides }),
       changes: Stream.empty,
       config: Effect.succeed(config),
+      update: (mutate) => {
+        const decoded = decodeForkConfig(mutate(config as RawForkConfig));
+        return Exit.isSuccess(decoded)
+          ? Effect.succeed(decoded.value)
+          : Effect.fail(
+              new ForkConfigWriteError({
+                path: FORK_CONFIG_FILENAME,
+                reason: "invalid",
+                detail: Cause.pretty(decoded.cause),
+              }),
+            );
+      },
     }),
   );
