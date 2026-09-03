@@ -65,7 +65,7 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ForkFlags from "../ForkFlags.ts";
-import { cliproxyDirectories } from "./CliProxyConfig.ts";
+import { cliproxyAuthsDir, cliproxyDirectories } from "./CliProxyConfig.ts";
 import {
   decryptSyncEntry,
   deriveSyncKey,
@@ -267,7 +267,12 @@ const make = Effect.gen(function* () {
   const ticker = yield* CliProxySyncTicker;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { rootDir, authsDir, tombstonesPath } = cliproxyDirectories(config.baseDir, path);
+  const directories = cliproxyDirectories(config.baseDir, path);
+  const { rootDir, tombstonesPath } = directories;
+  // Read per operation: in external mode the proxy's own auth dir replaces the managed one.
+  const currentAuthsDir = flags.config.pipe(
+    Effect.map((forkConfig) => cliproxyAuthsDir(forkConfig.cliproxy, directories, path)),
+  );
 
   const lastSyncRef = yield* Ref.make<{ at?: string; error?: string }>({});
   const changesPubSub = yield* PubSub.unbounded<CliProxySyncStatus>();
@@ -332,6 +337,7 @@ const make = Effect.gen(function* () {
     );
 
   const listLocal = Effect.gen(function* () {
+    const authsDir = yield* currentAuthsDir;
     const exists = yield* fs.exists(authsDir).pipe(Effect.orElseSucceed(() => false));
     if (!exists) return [] as Array<SyncStamp>;
     const names = yield* fs.readDirectory(authsDir).pipe(Effect.mapError(ioError("read auths")));
@@ -352,7 +358,8 @@ const make = Effect.gen(function* () {
   });
 
   const readEntry = (key: SyncKey, stamp: SyncStamp) =>
-    fs.readFile(path.join(authsDir, stamp.id)).pipe(
+    currentAuthsDir.pipe(
+      Effect.flatMap((authsDir) => fs.readFile(path.join(authsDir, stamp.id))),
       Effect.mapError(ioError(`read ${stamp.id}`)),
       Effect.flatMap((bytes) => encryptSyncEntry(key, bytes)),
       Effect.mapError((error) =>
@@ -368,6 +375,7 @@ const make = Effect.gen(function* () {
   // comparison is exact on both sides.
   const writeEntry = (id: string, bytes: Uint8Array, updatedAt: string) =>
     Effect.gen(function* () {
+      const authsDir = yield* currentAuthsDir;
       const target = path.join(authsDir, id);
       const temp = path.join(authsDir, `.sync-${id}.tmp`);
       // Numeric `utimes` arguments are seconds; the stamp keeps millisecond precision.
@@ -380,7 +388,8 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.mapError(ioError(`write ${id}`)));
 
   const removeEntry = (id: string) =>
-    fs.remove(path.join(authsDir, id)).pipe(
+    currentAuthsDir.pipe(
+      Effect.flatMap((authsDir) => fs.remove(path.join(authsDir, id))),
       Effect.catch((error) =>
         error.reason._tag === "NotFound" ? Effect.void : Effect.fail(error),
       ),
