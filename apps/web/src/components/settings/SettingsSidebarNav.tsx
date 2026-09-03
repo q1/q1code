@@ -21,6 +21,7 @@ import {
   PaletteIcon,
   SearchIcon,
   Settings2Icon,
+  WaypointsIcon, // fork: cliproxy
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate, useRouterState } from "@tanstack/react-router";
@@ -56,6 +57,7 @@ import {
   type SettingsSearchItem,
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
+import { useForkVisibleSettingsNavItems } from "../../fork/useForkSettingsNav"; // fork: cliproxy
 
 const T3ConnectSidebarSignIn = lazy(() =>
   import("../clerk/T3ConnectSidebarSignIn").then((module) => ({
@@ -76,6 +78,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/projects": PanelsTopLeftIcon,
   "/settings/keybindings": KeyboardIcon,
   "/settings/providers": BotIcon,
+  "/settings/prism": WaypointsIcon, // fork: cliproxy
   "/settings/integrations": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
@@ -155,6 +158,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     null,
   );
   const searchableItems = useAvailableSettingsSearchItems();
+  const navItems = useForkVisibleSettingsNavItems(SETTINGS_NAV_ITEMS); // fork: cliproxy
   const results = useMemo(() => searchSettings(query, searchableItems), [query, searchableItems]);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
@@ -414,7 +418,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             </SidebarMenu>
           ) : (
             <SidebarMenu className="ps-px">
-              {SETTINGS_NAV_ITEMS.map((item) => {
+              {/* fork: cliproxy */ navItems.map((item) => {
                 const Icon = item.icon;
                 const pageSections = SETTINGS_PAGE_SECTIONS[item.to];
                 const isActive = activeSettingsPath === item.to;

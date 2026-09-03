@@ -1,19 +1,24 @@
 /**
- * Pure state for the Accounts (CLIProxyAPI) settings section: the "Add
- * account" login flow as a reducer, plus the label helpers the section and the
- * mobile card render from. No React, no network; the section wires these to
- * `@t3tools/client-runtime/fork`.
+ * Pure state for the Prism settings tab: the "Add account" login flow and the
+ * accounts list (optimistic edits with rollback) as reducers, plus the label
+ * helpers the tab and the mobile card render from. No React, no network; the
+ * tab wires these to `@t3tools/client-runtime/fork`.
  */
 import type {
+  CliProxyAccount,
+  CliProxyAccountPatch,
   CliProxyAccountUsage,
   CliProxyLoginProvider,
   CliProxyLoginStarted,
   CliProxyLoginStatus,
   CliProxyState,
+  CliProxyStatus,
   CliProxyUnavailableReason,
 } from "@q1code/core/cliproxyApi";
-import { FORK_CONFIG_FILENAME } from "@q1code/core/config";
+import { type CliProxyMode, FORK_CONFIG_FILENAME } from "@q1code/core/config";
 import { envVarForFlag } from "@q1code/core/flags";
+
+import { formatElapsedDurationLabel } from "~/timestampFormat";
 
 export const CLIPROXY_LOGIN_PROVIDERS: ReadonlyArray<CliProxyLoginProvider> = [
   "codex",
@@ -249,4 +254,156 @@ export function flattenCliProxyUsage(
     });
   }
   return rows;
+}
+
+export const CLIPROXY_MODE_LABELS: Readonly<Record<CliProxyMode, string>> = {
+  sidecar: "Sidecar",
+  external: "External",
+};
+
+/** Servers older than the `mode` field run the bundled sidecar. */
+export function resolveCliProxyMode(status: Pick<CliProxyStatus, "mode">): CliProxyMode {
+  return status.mode ?? "sidecar";
+}
+
+export function describeCliProxyMode(mode: CliProxyMode): string {
+  switch (mode) {
+    case "sidecar":
+      return "q1code starts the bundled CLIProxyAPI on the primary environment and supervises it; restart stops and relaunches it.";
+    case "external":
+      return "q1code manages a proxy something else runs; restart re-checks the connection.";
+  }
+}
+
+/** Confirm-dialog text for the Restart button. */
+export function describeCliProxyRestart(mode: CliProxyMode): string {
+  return mode === "external"
+    ? "Re-check the connection to the external proxy? Accounts and routing reload once it answers."
+    : "Restart the Prism sidecar? Claude and Codex instances routed through it fail requests until it is ready again.";
+}
+
+/** "for 3m" after `since`, "just now" right after a state change, `null` without a usable timestamp. */
+export function formatCliProxySince(since: string | undefined, nowMs: number): string | null {
+  if (since === undefined) return null;
+  const elapsed = formatElapsedDurationLabel(since, nowMs);
+  if (elapsed === "") return null;
+  return elapsed === "just now" ? elapsed : `for ${elapsed}`;
+}
+
+/** One line under the state badge: "Ready for 3m · 2 restarts". */
+export function summarizeCliProxyStatus(
+  status: Pick<CliProxyStatus, "state" | "since" | "restarts">,
+  nowMs: number,
+): string {
+  const label = CLIPROXY_STATE_LABELS[status.state];
+  const since = formatCliProxySince(status.since, nowMs);
+  const parts = [since === null ? label : `${label} ${since}`];
+  if (status.restarts !== undefined && status.restarts > 0) {
+    parts.push(`${status.restarts} restart${status.restarts === 1 ? "" : "s"}`);
+  }
+  return parts.join(" · ");
+}
+
+/** Sync interval as people configure it: whole minutes when even, seconds otherwise. */
+export function formatCliProxySyncInterval(seconds: number): string {
+  if (seconds >= 60 && seconds % 60 === 0) {
+    const minutes = seconds / 60;
+    return `every ${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  return `every ${seconds} second${seconds === 1 ? "" : "s"}`;
+}
+
+export interface CliProxyAccountsState {
+  /** `null` until the first list arrives, so the table can tell "loading" from "empty". */
+  readonly accounts: ReadonlyArray<CliProxyAccount> | null;
+  /** Rows with a mutation in flight, keyed by id, holding the row as it was before the optimistic change. */
+  readonly pending: ReadonlyMap<string, CliProxyAccount>;
+}
+
+export type CliProxyAccountsEvent =
+  | { readonly type: "loaded"; readonly accounts: ReadonlyArray<CliProxyAccount> }
+  /** Applies the patch to the row at once; `patchFailed` puts the old row back. */
+  | { readonly type: "patchStarted"; readonly id: string; readonly patch: CliProxyAccountPatch }
+  | { readonly type: "patchSucceeded"; readonly id: string; readonly account: CliProxyAccount }
+  | { readonly type: "patchFailed"; readonly id: string }
+  /** The row stays visible but inert until the server confirms; nothing to roll back. */
+  | { readonly type: "deleteStarted"; readonly id: string }
+  | { readonly type: "deleteSucceeded"; readonly id: string }
+  | { readonly type: "deleteFailed"; readonly id: string };
+
+export const INITIAL_CLIPROXY_ACCOUNTS: CliProxyAccountsState = {
+  accounts: null,
+  pending: new Map(),
+};
+
+function withoutPending(
+  pending: CliProxyAccountsState["pending"],
+  id: string,
+): CliProxyAccountsState["pending"] {
+  if (!pending.has(id)) return pending;
+  const next = new Map(pending);
+  next.delete(id);
+  return next;
+}
+
+function replaceAccount(
+  accounts: ReadonlyArray<CliProxyAccount>,
+  account: CliProxyAccount,
+): ReadonlyArray<CliProxyAccount> {
+  return accounts.map((entry) => (entry.id === account.id ? account : entry));
+}
+
+export function reduceCliProxyAccounts(
+  state: CliProxyAccountsState,
+  event: CliProxyAccountsEvent,
+): CliProxyAccountsState {
+  switch (event.type) {
+    case "loaded":
+      return { ...state, accounts: event.accounts };
+    case "patchStarted": {
+      const current = state.accounts?.find((entry) => entry.id === event.id);
+      // One mutation per row at a time; the row's controls are disabled meanwhile.
+      if (current === undefined || state.pending.has(event.id)) return state;
+      const optimistic: CliProxyAccount = {
+        ...current,
+        ...(event.patch.disabled === undefined ? {} : { disabled: event.patch.disabled }),
+        ...(event.patch.weight === undefined ? {} : { weight: event.patch.weight }),
+      };
+      return {
+        accounts: replaceAccount(state.accounts ?? [], optimistic),
+        pending: new Map(state.pending).set(event.id, current),
+      };
+    }
+    case "patchSucceeded":
+      return {
+        accounts: state.accounts === null ? null : replaceAccount(state.accounts, event.account),
+        pending: withoutPending(state.pending, event.id),
+      };
+    case "patchFailed": {
+      const snapshot = state.pending.get(event.id);
+      return {
+        accounts:
+          state.accounts === null || snapshot === undefined
+            ? state.accounts
+            : replaceAccount(state.accounts, snapshot),
+        pending: withoutPending(state.pending, event.id),
+      };
+    }
+    case "deleteStarted": {
+      const current = state.accounts?.find((entry) => entry.id === event.id);
+      if (current === undefined || state.pending.has(event.id)) return state;
+      return { ...state, pending: new Map(state.pending).set(event.id, current) };
+    }
+    case "deleteSucceeded":
+      return {
+        accounts: state.accounts?.filter((entry) => entry.id !== event.id) ?? null,
+        pending: withoutPending(state.pending, event.id),
+      };
+    case "deleteFailed":
+      return { ...state, pending: withoutPending(state.pending, event.id) };
+  }
+}
+
+export function isCliProxyAccountPending(state: CliProxyAccountsState, id: string): boolean {
+  return state.pending.has(id);
 }
