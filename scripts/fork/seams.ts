@@ -28,6 +28,9 @@ const forkOwnedPatterns: ReadonlyArray<RegExp> = [
   /^\.claude\/skills\/fork-/,
   /^fork\//,
   /^scripts\/fork\//,
+  // Carried upstream PR #5178 (fork feature swift-ios, see fork/FEATURES.md).
+  /^apps\/swift-ios\//,
+  /^docs\/user\/swiftui-mobile\.md$/,
 ];
 
 const markerPattern = /(?:\/\/|\/\*|#|<!--)\s*fork:/g;
