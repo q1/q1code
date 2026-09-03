@@ -23,6 +23,30 @@ export const CliProxyRoutingStrategy = Schema.Literals([
 ]);
 export type CliProxyRoutingStrategy = typeof CliProxyRoutingStrategy.Type;
 
+export const CliProxySyncRole = Schema.Literals(["primary", "replica"]);
+export type CliProxySyncRole = typeof CliProxySyncRole.Type;
+
+export const CLIPROXY_SYNC_DEFAULT_INTERVAL_SECONDS = 300;
+
+/**
+ * `cliproxy.sync` section: cross-machine auth-file sync. The bearer token and
+ * the shared encryption secret come from `Q1CODE_CLIPROXY_SYNC_TOKEN` and
+ * `Q1CODE_CLIPROXY_SYNC_KEY`, or from the server secret store under the names
+ * given here when those variables are unset.
+ */
+export const CliProxySyncConfig = Schema.Struct({
+  role: CliProxySyncRole,
+  /** Replica only: the primary's environment origin, e.g. `http://spark-01:3774`. */
+  primaryUrl: Schema.optionalKey(Schema.String),
+  /** Replica only: secret-store name of an admin-scoped bearer token issued on the primary. */
+  tokenSecretName: Schema.optionalKey(Schema.String),
+  /** Secret-store name of the shared encryption secret; must match on every environment. */
+  sharedKeySecretName: Schema.optionalKey(Schema.String),
+  /** Replica pull interval. Default 300. */
+  intervalSeconds: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(5))),
+});
+export type CliProxySyncConfig = typeof CliProxySyncConfig.Type;
+
 /** `cliproxy` section: the few sidecar knobs a user may pin from the file. Everything else is generated. */
 export const CliProxyConfig = Schema.Struct({
   /** Loopback port the sidecar listens on. Default 8317. */
@@ -32,6 +56,7 @@ export const CliProxyConfig = Schema.Struct({
   binaryPath: Schema.optionalKey(Schema.String),
   /** Download this upstream release instead of the pinned one. */
   releaseVersion: Schema.optionalKey(Schema.String),
+  sync: Schema.optionalKey(CliProxySyncConfig),
 });
 export type CliProxyConfig = typeof CliProxyConfig.Type;
 

@@ -50,6 +50,36 @@ describe("fork config", () => {
     });
   });
 
+  it("decodes the cliproxy sync section and rejects a bad role or interval", () => {
+    const exit = decodeForkConfig({
+      cliproxy: {
+        sync: {
+          role: "replica",
+          primaryUrl: "http://spark-01:3774",
+          tokenSecretName: "cliproxy-sync-token",
+          intervalSeconds: 60,
+          extra: 1,
+        },
+      },
+    });
+    expect(Exit.isSuccess(exit) && exit.value).toEqual({
+      cliproxy: {
+        sync: {
+          role: "replica",
+          primaryUrl: "http://spark-01:3774",
+          tokenSecretName: "cliproxy-sync-token",
+          intervalSeconds: 60,
+        },
+      },
+    });
+    expect(Exit.isFailure(decodeForkConfig({ cliproxy: { sync: { role: "leader" } } }))).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeForkConfig({ cliproxy: { sync: { role: "primary", intervalSeconds: 1 } } }),
+      ),
+    ).toBe(true);
+  });
+
   it("rejects an out-of-range port or an unknown routing strategy", () => {
     expect(Exit.isFailure(decodeForkConfig({ cliproxy: { port: 70000 } }))).toBe(true);
     expect(Exit.isFailure(decodeForkConfig({ cliproxy: { port: 80.5 } }))).toBe(true);
