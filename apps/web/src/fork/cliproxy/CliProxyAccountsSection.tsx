@@ -632,7 +632,7 @@ function CliProxyAccountsSectionBody() {
 
             <SettingsRow
               {...searchableSetting(SEARCH_IDS.routing)}
-              description={`How the sidecar picks an account per request. Applies immediately; on the next sidecar restart q1code re-applies cliproxy.routingStrategy from ${FORK_CONFIG_FILENAME}.`}
+              description={`How the sidecar picks an account per request. Applies immediately and is saved as cliproxy.routingStrategy in ${FORK_CONFIG_FILENAME}.`}
               control={
                 <Select
                   value={writable ? data.routing : null}

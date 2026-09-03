@@ -11,7 +11,9 @@ import {
   EnvironmentAuthInvalidError,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import { decodeForkConfig } from "@q1code/core/config";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -25,7 +27,7 @@ import {
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 
 import * as ServerConfig from "../../config.ts";
-import { ForkFlagsService } from "../ForkFlags.ts";
+import { ForkConfigWriteError, ForkFlagsService, type RawForkConfig } from "../ForkFlags.ts";
 import { cliProxyHttpApiLayer } from "./CliProxyHttpApi.ts";
 import { CliProxyService, type CliProxyStatus } from "./CliProxyService.ts";
 import { CliProxySyncNotConfigured, CliProxySyncService } from "./CliProxySync.ts";
@@ -81,17 +83,32 @@ const syncLayer = Layer.succeed(
   }),
 );
 
-const flagsLayer = (cliproxy: boolean) => {
+/** Flags with an in-memory `fork.json`: `raw` is what `update` would have written. */
+const makeFlags = (cliproxy: boolean, initial: RawForkConfig = {}) => {
   const values: ForkFlagValues = { ...DEFAULT_FORK_FLAGS, cliproxy };
-  return Layer.succeed(
+  const file = { raw: initial };
+  const layer = Layer.succeed(
     ForkFlagsService,
     ForkFlagsService.of({
       current: Effect.succeed(values),
       reload: Effect.succeed(values),
       changes: Stream.empty,
       config: Effect.succeed({}),
+      update: (mutate) =>
+        Effect.suspend(() => {
+          const next = mutate(file.raw);
+          const decoded = decodeForkConfig(next);
+          if (Exit.isFailure(decoded)) {
+            return Effect.fail(
+              new ForkConfigWriteError({ path: "fork.json", reason: "invalid", detail: "test" }),
+            );
+          }
+          file.raw = next;
+          return Effect.succeed(decoded.value);
+        }),
     }),
   );
+  return { layer, file };
 };
 
 /** `Bearer read` carries the standard scopes, `Bearer admin` the administrative ones, anything else is 401. */
@@ -143,14 +160,14 @@ const listing = [
 
 const makeClient = (
   sidecar: ReturnType<typeof makeSidecar>,
-  options: { readonly flag?: boolean } = {},
+  options: { readonly flag?: boolean; readonly flags?: ReturnType<typeof makeFlags> } = {},
 ) =>
   HttpApiTest.groups(CliProxyHttpApi, ["cliproxy"]).pipe(
     Effect.provide(
       cliProxyHttpApiLayer.pipe(
         Layer.provide(sidecar.layer),
         Layer.provide(syncLayer),
-        Layer.provide(flagsLayer(options.flag ?? true)),
+        Layer.provide((options.flags ?? makeFlags(options.flag ?? true)).layer),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "q1code-cliproxy-http-" })),
         Layer.provideMerge(authLayer),
         Layer.provideMerge(Layer.mergeAll(HttpPlatform.layer, Etag.layerWeak)),
@@ -315,7 +332,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxyHttpApi", (
     }),
   );
 
-  it.effect("sets the routing strategy through PUT and reads it back", () =>
+  it.effect("sets the routing strategy through PUT, persists it, and reads it back", () =>
     Effect.gen(function* () {
       let strategy = "round-robin";
       const sidecar = makeSidecar(READY, (method, path) => {
@@ -325,7 +342,13 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxyHttpApi", (
         }
         return { body: { strategy } };
       });
-      const client = yield* makeClient(sidecar);
+      // Keys the schema does not know, next to the one that moves.
+      const flags = makeFlags(true, {
+        flags: { cliproxy: true },
+        cliproxy: { port: 9001, routingStrategy: "round-robin" },
+        somethingElse: { nested: true },
+      });
+      const client = yield* makeClient(sidecar, { flags });
       assert.deepEqual(yield* client.cliproxy.getRouting(read), { strategy: "round-robin" });
       const updated = yield* client.cliproxy.setRouting({
         ...admin,
@@ -337,6 +360,25 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxyHttpApi", (
         path: "/routing/strategy",
         body: { value: "fill-first" },
       });
+      assert.deepEqual(flags.file.raw, {
+        flags: { cliproxy: true },
+        cliproxy: { port: 9001, routingStrategy: "fill-first" },
+        somethingElse: { nested: true },
+      });
+    }),
+  );
+
+  it.effect("answers 500 when the routing strategy cannot be persisted", () =>
+    Effect.gen(function* () {
+      const sidecar = makeSidecar(READY, () => ({ body: { strategy: "fill-first" } }));
+      // A `cliproxy` section the schema rejects makes the write fail validation.
+      const flags = makeFlags(true, { cliproxy: { port: "not-a-port" } });
+      const client = yield* makeClient(sidecar, { flags });
+      const failure = yield* client.cliproxy
+        .setRouting({ ...admin, payload: { strategy: "fill-first" } })
+        .pipe(Effect.flip);
+      assert.equal(failure._tag, "CliProxyConfigError");
+      assert.deepEqual(flags.file.raw, { cliproxy: { port: "not-a-port" } });
     }),
   );
 
