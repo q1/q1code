@@ -50,9 +50,37 @@ export const CliProxySyncConfig = Schema.Struct({
 });
 export type CliProxySyncConfig = typeof CliProxySyncConfig.Type;
 
+/**
+ * `sidecar` (default): q1code spawns and supervises the bundled CLIProxyAPI.
+ * `external`: q1code manages a CLIProxyAPI that something else runs (a container,
+ * a system service) through its management API; nothing is spawned.
+ */
+export const CliProxyMode = Schema.Literals(["sidecar", "external"]);
+export type CliProxyMode = typeof CliProxyMode.Type;
+
+/** Secret-store names the sidecar generates into and external mode reads from (`q1code fork secret set <name>`). */
+export const CLIPROXY_DEFAULT_MANAGEMENT_SECRET_NAME = "cliproxy-management-secret";
+export const CLIPROXY_DEFAULT_API_KEY_SECRET_NAME = "cliproxy-api-key";
+
+/** `cliproxy.external` section: where the externally managed CLIProxyAPI lives and how to talk to it. */
+export const CliProxyExternalConfig = Schema.Struct({
+  /** Origin of the running proxy, e.g. `http://127.0.0.1:8317`. No trailing slash, no path. */
+  baseUrl: Schema.String,
+  /** Secret-store name of the proxy's `remote-management.secret-key`. Default `cliproxy-management-secret`. */
+  managementSecretName: Schema.optionalKey(Schema.String),
+  /** Secret-store name of an API key the proxy accepts from clients; provider CLIs send it. Default `cliproxy-api-key`. */
+  apiKeySecretName: Schema.optionalKey(Schema.String),
+  /** The proxy's `auth-dir` on this host, when sync should read and write it directly. */
+  authDir: Schema.optionalKey(Schema.String),
+});
+export type CliProxyExternalConfig = typeof CliProxyExternalConfig.Type;
+
 /** `cliproxy` section: the few sidecar knobs a user may pin from the file. Everything else is generated. */
 export const CliProxyConfig = Schema.Struct({
-  /** Loopback port the sidecar listens on. Default 8317. */
+  /** Default `sidecar`. `external` requires the `external` section. */
+  mode: Schema.optionalKey(CliProxyMode),
+  external: Schema.optionalKey(CliProxyExternalConfig),
+  /** Loopback port the sidecar listens on. Default 8317. Ignored in external mode. */
   port: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
   routingStrategy: Schema.optionalKey(CliProxyRoutingStrategy),
   /** Use this executable instead of the bundled or downloaded one. */
