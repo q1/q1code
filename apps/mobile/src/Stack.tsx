@@ -58,6 +58,7 @@ import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRoute
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
+import { cliProxySettingsStackScreen } from "./fork/cliproxy/CliProxySettingsScreen"; // fork: cliproxy
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   SettingsLegalDocumentCloseHeaderButton,
@@ -199,6 +200,7 @@ const SettingsContentStack = createNativeStackNavigator({
         title: "Usage",
       },
     }),
+    SettingsPrism: cliProxySettingsStackScreen, // fork: cliproxy
   },
 });
 

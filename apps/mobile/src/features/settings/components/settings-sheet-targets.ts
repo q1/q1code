@@ -4,6 +4,7 @@ export type SettingsSheetTarget =
   | "SettingsAppearance"
   | "SettingsProjectGrouping"
   | "SettingsClientStorage"
+  | "SettingsPrism" // fork: cliproxy
   | "SettingsUsage";
 
 export type SettingsLegalDocumentTarget = "SettingsLegal";
