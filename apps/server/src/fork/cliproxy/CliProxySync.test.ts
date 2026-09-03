@@ -20,6 +20,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import { ForkFlagsEnvironment, ForkFlagsService } from "../ForkFlags.ts";
 import { cliproxyDirectories } from "./CliProxyConfig.ts";
+import { deriveSyncKey, encryptSyncEntry } from "./CliProxySyncCrypto.ts";
 import {
   CliProxySyncService,
   CliProxySyncTicker,
@@ -175,7 +176,7 @@ const makeNode = (input: {
         ? Layer.empty
         : Layer.succeed(CliProxySyncTicker, input.ticker as never),
     ),
-    Layer.provide(ServerSecretStore.layer),
+    Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(
       Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: `q1code-sync-${input.id}-` })),
     ),
@@ -306,6 +307,58 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxySync", (it)
           "old.json",
         ]);
       }).pipe(Effect.provide(primary));
+    }),
+  );
+
+  it.effect("reads the shared key from the secret store before the environment", () =>
+    Effect.gen(function* () {
+      // Default secret name, no env: the store alone configures the primary.
+      const stored = makeNode({
+        id: "stored-key",
+        config: { cliproxy: { sync: { role: "primary" } } },
+        env: {},
+        transport: noTransport,
+      });
+      yield* Effect.gen(function* () {
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        yield* secrets.set("cliproxy-sync-key", new TextEncoder().encode(`${KEY}\n`));
+        const service = yield* CliProxySyncService;
+        yield* writeAuth("a.json", '{"v":"a"}', T1);
+        const bundle = yield* service.exportBundle;
+        assert.equal(bundle.entries.length, 1);
+      }).pipe(Effect.provide(stored));
+
+      // A configured name beats the default, and the store beats the env var:
+      // an entry encrypted under the env key must not decrypt.
+      const named = makeNode({
+        id: "named-key",
+        config: { cliproxy: { sync: { role: "primary", sharedKeySecretName: "my-key" } } },
+        env: { Q1CODE_CLIPROXY_SYNC_KEY: "env-key" },
+        transport: noTransport,
+      });
+      yield* Effect.gen(function* () {
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        yield* secrets.set("my-key", new TextEncoder().encode("store-key"));
+        const service = yield* CliProxySyncService;
+        yield* writeAuth("a.json", '{"v":"a"}', T1);
+        const entry = (yield* service.exportBundle).entries[0]!;
+        const underEnvKey = yield* encryptSyncEntry(
+          deriveSyncKey("env-key"),
+          new TextEncoder().encode('{"v":"b"}'),
+        );
+        const rejected = yield* service
+          .applyPush([{ ...entry, updatedAt: T2, ciphertext: underEnvKey }])
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(rejected));
+        const underStoreKey = yield* encryptSyncEntry(
+          deriveSyncKey("store-key"),
+          new TextEncoder().encode('{"v":"b"}'),
+        );
+        const accepted = yield* service.applyPush([
+          { ...entry, updatedAt: T2, ciphertext: underStoreKey },
+        ]);
+        assert.deepEqual(accepted.written, ["a.json"]);
+      }).pipe(Effect.provide(named));
     }),
   );
 
