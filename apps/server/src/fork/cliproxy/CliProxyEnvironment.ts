@@ -1,12 +1,13 @@
 /**
- * Process-wide handoff between the sidecar and the provider seams. There is
- * exactly one sidecar per server process, and the seams run in fibers whose
- * context predates the sidecar (provider adapters are built before it is
- * ready), so the endpoint is published here instead of through the Effect
- * context. Set only while the proxy is ready; cleared on every other state.
+ * Process-wide handoff between the proxy service and the provider seams. There
+ * is exactly one proxy per server process (the sidecar or the configured
+ * external one), and the seams run in fibers whose context predates it
+ * (provider adapters are built before it is ready), so the endpoint is
+ * published here instead of through the Effect context. Set only while the
+ * proxy is ready; cleared on every other state.
  */
 export interface CliProxyEndpoint {
-  /** `http://127.0.0.1:<port>`, no trailing slash. */
+  /** The proxy origin: `http://127.0.0.1:<port>` for the sidecar, `cliproxy.external.baseUrl` otherwise. No trailing slash. */
   readonly baseUrl: string;
   readonly apiKey: string;
 }

@@ -4,9 +4,10 @@
  * secret never leaves the server; clients authenticate with the same
  * environment auth as every other `/api` endpoint.
  *
- * Reads need `orchestration:read`; mutations and both sync endpoints need
- * `access:write`. With the flag off or the sidecar not ready every endpoint
- * except `status` and `sync/status` answers 503 with the sidecar state.
+ * Reads need `orchestration:read`; mutations, `restart`, and both sync
+ * endpoints need `access:write`. With the flag off or the proxy not ready every
+ * endpoint except `status` and `sync/status` answers 503 with the proxy state
+ * (`restart` only needs the flag: it is how a `failed` proxy is retried).
  *
  * `PUT routing` also writes `cliproxy.routingStrategy` into `fork.json`, so the
  * strategy the sidecar is told now is the one it is started with next time.
@@ -332,14 +333,12 @@ export const cliProxyHttpApiLayer = HttpApiBuilder.group(
         Effect.andThen(body),
       );
 
-    return handlers
-      .handle("status", (args) =>
-        withRead(
-          args.endpoint.name,
-          Effect.gen(function* () {
-            const status = yield* proxy.status;
-            const syncStatus = yield* sync.status;
-            return {
+    /** The proxy status plus the sync status, in the wire shape. */
+    const fullStatus = (status: CliProxy.CliProxyStatus) =>
+      sync.status.pipe(
+        Effect.map(
+          (syncStatus) =>
+            ({
               state: status.state,
               port: status.port,
               ...(status.version !== undefined ? { version: status.version } : {}),
@@ -348,8 +347,23 @@ export const cliProxyHttpApiLayer = HttpApiBuilder.group(
               ...(syncStatus.lastSyncError !== undefined
                 ? { lastSyncError: syncStatus.lastSyncError }
                 : {}),
-            } satisfies CliProxyStatus;
-          }),
+              mode: status.mode,
+              ...(status.baseUrl !== undefined ? { baseUrl: status.baseUrl } : {}),
+              ...(status.lastError !== undefined ? { lastError: status.lastError } : {}),
+              restarts: status.restarts,
+              since: status.since,
+            }) satisfies CliProxyStatus,
+        ),
+      );
+
+    return handlers
+      .handle("status", (args) =>
+        withRead(args.endpoint.name, proxy.status.pipe(Effect.flatMap(fullStatus))),
+      )
+      .handle("restart", (args) =>
+        withWrite(
+          args.endpoint.name,
+          requireFlag.pipe(Effect.andThen(proxy.restart), Effect.flatMap(fullStatus)),
         ),
       )
       .handle("listAccounts", (args) =>
