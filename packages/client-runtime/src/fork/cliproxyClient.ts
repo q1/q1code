@@ -21,7 +21,10 @@
  *   (403) and the transport errors every environment request can raise.
  *
  * Reads need `orchestration:read`; `patch`, `delete`, `startLogin`,
- * `cancelLogin`, `completeLogin`, and `setRouting` need `access:write`.
+ * `cancelLogin`, `completeLogin`, `setRouting`, and `restart` need
+ * `access:write`. `restartCliProxy` restarts the sidecar (or re-probes an
+ * external proxy) and answers with the status right after; poll
+ * `getCliProxyStatus` until `ready` or `failed`. With the flag off it is a 503.
  *
  * Login flow: `startCliProxyLogin` -> open `authUrl` (show `userCode` for
  * device flows) -> poll `getCliProxyLoginStatus` until `completed` (then
@@ -170,6 +173,11 @@ export const getCliProxyStatus = (
   input: CliProxyClientInput,
 ): Effect.Effect<CliProxyStatus, CliProxyClientError, HttpClient.HttpClient> =>
   call(input, "GET", "status", (client, headers) => client.cliproxy.status({ headers }));
+
+export const restartCliProxy = (
+  input: CliProxyClientInput,
+): Effect.Effect<CliProxyStatus, CliProxyClientError, HttpClient.HttpClient> =>
+  call(input, "POST", "restart", (client, headers) => client.cliproxy.restart({ headers }));
 
 export const listCliProxyAccounts = (
   input: CliProxyClientInput,
