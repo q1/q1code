@@ -236,7 +236,7 @@ jobs:
   parity:
     name: Flags-off Parity
     needs: [test, test_server]
-    if: ${{ !cancelled() && (github.ref == 'refs/heads/fork' || startsWith(github.ref, 'refs/heads/sync/')) }}
+    if: ${{ !cancelled() && (github.ref == 'refs/heads/fork' || startsWith(github.ref, 'refs/heads/sync/') || (github.event_name == 'pull_request' && startsWith(github.head_ref, 'sync/'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
