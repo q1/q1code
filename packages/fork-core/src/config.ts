@@ -27,20 +27,23 @@ export const CliProxySyncRole = Schema.Literals(["primary", "replica"]);
 export type CliProxySyncRole = typeof CliProxySyncRole.Type;
 
 export const CLIPROXY_SYNC_DEFAULT_INTERVAL_SECONDS = 300;
+/** Secret-store names the sync reads when `fork.json` does not name others (`q1code fork secret set <name>`). */
+export const CLIPROXY_SYNC_DEFAULT_TOKEN_SECRET_NAME = "cliproxy-sync-token";
+export const CLIPROXY_SYNC_DEFAULT_KEY_SECRET_NAME = "cliproxy-sync-key";
 
 /**
  * `cliproxy.sync` section: cross-machine auth-file sync. The bearer token and
- * the shared encryption secret come from `Q1CODE_CLIPROXY_SYNC_TOKEN` and
- * `Q1CODE_CLIPROXY_SYNC_KEY`, or from the server secret store under the names
- * given here when those variables are unset.
+ * the shared encryption secret are read from the server secret store first
+ * (`tokenSecretName` / `sharedKeySecretName`, defaulting to the names above),
+ * then from `Q1CODE_CLIPROXY_SYNC_TOKEN` / `Q1CODE_CLIPROXY_SYNC_KEY`.
  */
 export const CliProxySyncConfig = Schema.Struct({
   role: CliProxySyncRole,
   /** Replica only: the primary's environment origin, e.g. `http://spark-01:3774`. */
   primaryUrl: Schema.optionalKey(Schema.String),
-  /** Replica only: secret-store name of an admin-scoped bearer token issued on the primary. */
+  /** Replica only: secret-store name of an admin-scoped bearer token issued on the primary. Default `cliproxy-sync-token`. */
   tokenSecretName: Schema.optionalKey(Schema.String),
-  /** Secret-store name of the shared encryption secret; must match on every environment. */
+  /** Secret-store name of the shared encryption secret; must match on every environment. Default `cliproxy-sync-key`. */
   sharedKeySecretName: Schema.optionalKey(Schema.String),
   /** Replica pull interval. Default 300. */
   intervalSeconds: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(5))),
