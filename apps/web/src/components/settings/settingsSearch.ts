@@ -309,6 +309,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["fork flags T3FORK fork.json update-check cliproxy"],
   }, // fork: base
   {
+    id: "cliproxy-accounts",
+    title: "Accounts (CLIProxyAPI)",
+    to: "/settings/general",
+    searchTerms: ["cliproxy proxy sidecar pool oauth claude codex status sync weight enabled"],
+  }, // fork: cliproxy
+  {
+    id: "cliproxy-add-account",
+    title: "Add account",
+    to: "/settings/general",
+    searchTerms: ["cliproxy sign in login oauth provider codex anthropic antigravity xai kimi"],
+  }, // fork: cliproxy
+  {
+    id: "cliproxy-routing-strategy",
+    title: "Routing strategy",
+    to: "/settings/general",
+    searchTerms: ["cliproxy round robin weighted fill first load balancing"],
+  }, // fork: cliproxy
+  {
     id: "keybindings",
     title: "Keybindings",
     to: "/settings/keybindings",
