@@ -6,7 +6,7 @@
  * load; the next start simply writes the plaintext again.
  */
 import { CLIPROXY_DEFAULT_PORT } from "@q1code/core/cliproxy";
-import type { CliProxyRoutingStrategy } from "@q1code/core/config";
+import type { CliProxyConfig, CliProxyRoutingStrategy } from "@q1code/core/config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -37,6 +37,19 @@ export const cliproxyDirectories = (baseDir: string, path: Path.Path): CliProxyD
     tombstonesPath: path.join(rootDir, "tombstones.json"),
   };
 };
+
+/**
+ * Where the proxy's auth files live for sync and mtime lookups: the external
+ * proxy's `authDir` when configured, otherwise the managed `auths/`.
+ */
+export const cliproxyAuthsDir = (
+  section: CliProxyConfig | undefined,
+  directories: CliProxyDirectories,
+  path: Path.Path,
+): string =>
+  section?.mode === "external" && section.external?.authDir !== undefined
+    ? path.resolve(section.external.authDir)
+    : directories.authsDir;
 
 export const DEFAULT_CLIPROXY_ROUTING_STRATEGY: CliProxyRoutingStrategy = "round-robin";
 

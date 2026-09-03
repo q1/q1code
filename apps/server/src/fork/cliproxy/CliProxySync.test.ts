@@ -362,6 +362,47 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxySync", (it)
     }),
   );
 
+  it.effect("external mode reads and writes the proxy's own auth dir, not the managed one", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const authDir = yield* fs.makeTempDirectoryScoped({ prefix: "q1code-external-auths-" });
+      const node = makeNode({
+        id: "external-primary",
+        config: {
+          cliproxy: {
+            mode: "external",
+            external: { baseUrl: "http://127.0.0.1:8317", authDir },
+            sync: { role: "primary" },
+          },
+        },
+        env: { Q1CODE_CLIPROXY_SYNC_KEY: KEY },
+        transport: noTransport,
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* CliProxySyncService;
+        const { baseDir } = yield* ServerConfig.ServerConfig;
+        const managed = cliproxyDirectories(baseDir, path);
+        const file = path.join(authDir, "a.json");
+        yield* fs.writeFileString(file, '{"v":"a1"}');
+        yield* fs.utimes(file, Date.parse(T1) / 1000, Date.parse(T1) / 1000);
+
+        const bundle = yield* service.exportBundle;
+        assert.deepEqual(
+          bundle.entries.map((entry) => [entry.id, entry.updatedAt]),
+          [["a.json", T1]],
+        );
+        const pushed = { ...bundle.entries[0]!, updatedAt: T2 };
+        const result = yield* service.applyPush([pushed], [{ id: "gone.json", deletedAt: T0 }]);
+        assert.deepEqual(result, { written: ["a.json"], skipped: [], deleted: [] });
+        assert.equal(yield* fs.readFileString(file), '{"v":"a1"}');
+        assert.isFalse(yield* fs.exists(managed.authsDir));
+        // Tombstones stay with q1code's own state.
+        assert.isTrue(yield* fs.exists(managed.tombstonesPath));
+      }).pipe(Effect.provide(node));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("refuses to export without a shared key or when the role is replica", () =>
     Effect.gen(function* () {
       const noKey = makeNode({
