@@ -71,6 +71,8 @@ const makeSidecar = (
   return { layer, calls };
 };
 
+/** Sync that is not configured; `tombstones` collects what `DELETE accounts/:id` records. */
+const tombstones: Array<string> = [];
 const syncLayer = Layer.succeed(
   CliProxySyncService,
   CliProxySyncService.of({
@@ -80,6 +82,10 @@ const syncLayer = Layer.succeed(
     applyPush: (_entries: ReadonlyArray<CliProxySyncEntry>) =>
       Effect.fail(new CliProxySyncNotConfigured({ message: "no sync" })),
     syncNow: Effect.void,
+    recordTombstone: (id) =>
+      Effect.sync(() => {
+        tombstones.push(id);
+      }),
   }),
 );
 
@@ -256,10 +262,12 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxyHttpApi", (
       );
 
       sidecar.calls.length = 0;
+      tombstones.length = 0;
       yield* client.cliproxy.deleteAccount({ ...admin, params: { id: "claude-b.json" } });
       assert.deepEqual(sidecar.calls, [
         { method: "DELETE", path: "/auth-files?name=claude-b.json", body: undefined },
       ]);
+      assert.deepEqual(tombstones, ["claude-b.json"]);
     }),
   );
 
@@ -268,10 +276,12 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxyHttpApi", (
       const client = yield* makeClient(
         makeSidecar(READY, () => ({ status: 404, body: { error: "auth file not found" } })),
       );
+      tombstones.length = 0;
       const missing = yield* client.cliproxy
         .deleteAccount({ ...admin, params: { id: "gone.json" } })
         .pipe(Effect.flip);
       assert.equal(missing._tag, "CliProxyNotFoundError");
+      assert.deepEqual(tombstones, []);
     }),
   );
 
