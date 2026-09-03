@@ -22,6 +22,8 @@ export interface CliProxyDirectories {
   /** Managed `CODEX_HOME` that points Codex at the proxy. */
   readonly codexHomeDir: string;
   readonly configPath: string;
+  /** Sync deletions still to propagate, `{ "<auth file>": "<deletedAt>" }`. */
+  readonly tombstonesPath: string;
 }
 
 export const cliproxyDirectories = (baseDir: string, path: Path.Path): CliProxyDirectories => {
@@ -32,6 +34,7 @@ export const cliproxyDirectories = (baseDir: string, path: Path.Path): CliProxyD
     binDir: path.join(rootDir, "bin"),
     codexHomeDir: path.join(rootDir, "codex-home"),
     configPath: path.join(rootDir, "config.yaml"),
+    tombstonesPath: path.join(rootDir, "tombstones.json"),
   };
 };
 

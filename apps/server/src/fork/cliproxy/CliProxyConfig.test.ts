@@ -71,6 +71,7 @@ it.layer(NodeServices.layer)("cliproxy config files", (it) => {
       assert.equal(directories.binDir, path.join("/base", "cliproxy", "bin"));
       assert.equal(directories.codexHomeDir, path.join("/base", "cliproxy", "codex-home"));
       assert.equal(directories.configPath, path.join("/base", "cliproxy", "config.yaml"));
+      assert.equal(directories.tombstonesPath, path.join("/base", "cliproxy", "tombstones.json"));
     }),
   );
 
