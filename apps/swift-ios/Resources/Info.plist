@@ -36,6 +36,8 @@
     </dict>
     <key>NSMicrophoneUsageDescription</key>
     <string>Allow T3 Code to use your microphone for voice input.</string>
+    <key>T3CodeAppGroupIdentifier</key>
+    <string>$(T3CODE_APP_GROUP_IDENTIFIER)</string>
     <key>T3GitCommit</key>
     <string>$(T3_GIT_COMMIT)</string>
     <key>T3ConnectClerkJWTTemplate</key>
