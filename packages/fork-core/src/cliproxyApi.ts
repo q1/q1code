@@ -56,6 +56,21 @@ export type CliProxyStatus = typeof CliProxyStatus.Type;
 export const CliProxyAccountId = Schema.String.check(Schema.isPattern(/^[^/\\]+\.json$/));
 export type CliProxyAccountId = typeof CliProxyAccountId.Type;
 
+/** Passive provider quota observations the sidecar attaches to an auth file (`observed_at`, `signals`). */
+export const CliProxyAccountQuota = Schema.Struct({
+  observedAt: Schema.optionalKey(IsoTimestamp),
+  signals: Schema.Record(Schema.String, Schema.String),
+});
+export type CliProxyAccountQuota = typeof CliProxyAccountQuota.Type;
+
+/** Per-account request counters since the sidecar started, from the `/auth-files` entry. */
+export const CliProxyAccountUsage = Schema.Struct({
+  success: Schema.Number,
+  failed: Schema.Number,
+  quota: Schema.optionalKey(CliProxyAccountQuota),
+});
+export type CliProxyAccountUsage = typeof CliProxyAccountUsage.Type;
+
 export const CliProxyAccount = Schema.Struct({
   /** The auth file name, unique per sidecar. */
   id: CliProxyAccountId,
@@ -66,6 +81,8 @@ export const CliProxyAccount = Schema.Struct({
   disabled: Schema.Boolean,
   weight: Schema.optionalKey(Schema.Number),
   updatedAt: IsoTimestamp,
+  /** Absent when the sidecar reports no counters for the file (older sidecars, disk-only listings). */
+  usage: Schema.optionalKey(CliProxyAccountUsage),
 });
 export type CliProxyAccount = typeof CliProxyAccount.Type;
 

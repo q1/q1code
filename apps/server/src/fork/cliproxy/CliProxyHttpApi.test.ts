@@ -159,8 +159,19 @@ const listing = [
     disabled: false,
     weight: 3,
     updated_at: "2026-09-02T10:00:00.123456789Z",
+    success: 12,
+    failed: 1,
+    quota: { observed_at: "2026-09-02T09:30:00Z", signals: { "5h": "ok" } },
   },
-  { name: "claude-b.json", type: "claude", disabled: true, modtime: "2026-09-02T11:00:00Z" },
+  {
+    name: "claude-b.json",
+    type: "claude",
+    disabled: true,
+    modtime: "2026-09-02T11:00:00Z",
+    success: 0,
+    failed: 0,
+    quota: { signals: {} },
+  },
   { name: ".oauth-anthropic-x.oauth", type: "" },
 ];
 
@@ -222,6 +233,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxyHttpApi", (
           disabled: false,
           weight: 3,
           updatedAt: "2026-09-02T10:00:00.123Z",
+          usage: {
+            success: 12,
+            failed: 1,
+            quota: { observedAt: "2026-09-02T09:30:00.000Z", signals: { "5h": "ok" } },
+          },
         },
         {
           id: "claude-b.json",
@@ -229,6 +245,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxyHttpApi", (
           label: "claude-b",
           disabled: true,
           updatedAt: "2026-09-02T11:00:00.000Z",
+          usage: { success: 0, failed: 0 },
         },
       ]);
     }),

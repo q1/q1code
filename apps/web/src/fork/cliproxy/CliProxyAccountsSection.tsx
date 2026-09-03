@@ -49,6 +49,7 @@ import {
   CLIPROXY_LOGIN_PROVIDERS,
   CLIPROXY_STATE_LABELS,
   type CliProxyUsageRow,
+  describeCliProxyAccountQuota,
   describeCliProxyUnavailable,
   flattenCliProxyUsage,
   IDLE_LOGIN_FLOW,
@@ -782,6 +783,7 @@ function AccountsTable({
   readonly onWeight: (account: CliProxyAccount, weight: number) => void;
   readonly onDelete: (account: CliProxyAccount) => void;
 }) {
+  const showUsage = accounts.some((account) => account.usage !== undefined);
   return (
     <div className="mt-1 mb-2 -mx-2">
       <Table>
@@ -791,6 +793,7 @@ function AccountsTable({
             <TableHead>Account</TableHead>
             <TableHead>Enabled</TableHead>
             <TableHead>Weight</TableHead>
+            {showUsage ? <TableHead>Requests</TableHead> : null}
             <TableHead>Updated</TableHead>
             <TableHead className="w-8" />
           </TableRow>
@@ -832,6 +835,16 @@ function AccountsTable({
                     onCommit={(weight) => onWeight(account, weight)}
                   />
                 </TableCell>
+                {showUsage ? (
+                  <TableCell
+                    className="text-muted-foreground tabular-nums whitespace-nowrap"
+                    title={describeCliProxyAccountQuota(account.usage)}
+                  >
+                    {account.usage
+                      ? `${account.usage.success} ok · ${account.usage.failed} failed`
+                      : "—"}
+                  </TableCell>
+                ) : null}
                 <TableCell className="text-muted-foreground">{updated || "—"}</TableCell>
                 <TableCell>
                   <Button
