@@ -50,6 +50,8 @@ const makeSidecar = (
       status: Effect.succeed(status),
       changes: Stream.empty,
       endpoint: Effect.succeed(Option.none()),
+      // Answers with the status a restart would have settled on.
+      restart: Effect.succeed({ ...status, restarts: status.restarts + 1 }),
       management: {
         request: (path, options) =>
           Effect.sync(() => {
@@ -145,8 +147,24 @@ const authLayer = Layer.succeed(EnvironmentAuthenticatedAuth, (httpEffect) =>
   }),
 );
 
-const READY: CliProxyStatus = { state: "ready", port: 8317, version: "7.2.147", pid: 42 };
-const OFF: CliProxyStatus = { state: "off", port: 8317 };
+const SINCE = "2026-09-02T09:00:00.000Z";
+const READY: CliProxyStatus = {
+  state: "ready",
+  mode: "sidecar",
+  port: 8317,
+  since: SINCE,
+  restarts: 0,
+  version: "7.2.147",
+  pid: 42,
+  baseUrl: "http://127.0.0.1:8317",
+};
+const OFF: CliProxyStatus = {
+  state: "off",
+  mode: "sidecar",
+  port: 8317,
+  since: SINCE,
+  restarts: 0,
+};
 
 const listing = [
   {
@@ -200,7 +218,14 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxyHttpApi", (
     Effect.gen(function* () {
       const client = yield* makeClient(makeSidecar(OFF, () => ({ body: {} })));
       const status = yield* client.cliproxy.status(read);
-      assert.deepEqual(status, { state: "off", port: 8317, role: "standalone" });
+      assert.deepEqual(status, {
+        state: "off",
+        port: 8317,
+        role: "standalone",
+        mode: "sidecar",
+        restarts: 0,
+        since: SINCE,
+      });
       const unauthenticated = yield* client.cliproxy.status({ headers: {} }).pipe(Effect.flip);
       assert.equal(unauthenticated._tag, "EnvironmentAuthInvalidError");
     }),
@@ -217,6 +242,56 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxyHttpApi", (
       const sync = yield* client.cliproxy.syncExport(admin).pipe(Effect.flip);
       assert.equal(sync._tag, "CliProxyUnavailableError");
       assert.deepEqual(sidecar.calls, []);
+    }),
+  );
+
+  it.effect("status carries the proxy mode, origin, restarts, and last error", () =>
+    Effect.gen(function* () {
+      const external: CliProxyStatus = {
+        state: "failed",
+        mode: "external",
+        port: 8317,
+        since: SINCE,
+        restarts: 2,
+        lastError: "connect ECONNREFUSED",
+      };
+      const client = yield* makeClient(makeSidecar(external, () => ({ body: {} })));
+      const status = yield* client.cliproxy.status(read);
+      assert.deepEqual(status, {
+        state: "failed",
+        port: 8317,
+        role: "standalone",
+        mode: "external",
+        lastError: "connect ECONNREFUSED",
+        restarts: 2,
+        since: SINCE,
+      });
+      const ready = yield* makeClient(makeSidecar(READY, () => ({ body: {} })));
+      assert.equal((yield* ready.cliproxy.status(read)).baseUrl, "http://127.0.0.1:8317");
+    }),
+  );
+
+  it.effect("restart needs the flag and access:write, then answers with the settled status", () =>
+    Effect.gen(function* () {
+      const off = yield* makeClient(
+        makeSidecar(OFF, () => ({ body: {} })),
+        { flag: false },
+      );
+      const unavailable = yield* off.cliproxy.restart(admin).pipe(Effect.flip);
+      assert.equal(unavailable._tag, "CliProxyUnavailableError");
+      assert.isTrue(
+        unavailable._tag === "CliProxyUnavailableError" && unavailable.reason === "flag-off",
+      );
+
+      const client = yield* makeClient(makeSidecar(READY, () => ({ body: {} })));
+      const forbidden = yield* client.cliproxy.restart(read).pipe(Effect.flip);
+      assert.equal(forbidden._tag, "EnvironmentScopeRequiredError");
+
+      const status = yield* client.cliproxy.restart(admin);
+      assert.equal(status.state, "ready");
+      assert.equal(status.mode, "sidecar");
+      assert.equal(status.restarts, 1);
+      assert.equal(status.role, "standalone");
     }),
   );
 
