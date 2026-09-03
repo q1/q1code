@@ -5,6 +5,7 @@
  * `@t3tools/client-runtime/fork`.
  */
 import type {
+  CliProxyAccountUsage,
   CliProxyLoginProvider,
   CliProxyLoginStarted,
   CliProxyLoginStatus,
@@ -205,6 +206,16 @@ export function parseCliProxyWeight(raw: string, current: number | undefined): n
  * part is ever shown; a key with no separator is an API key on its own and
  * renders as a generic label.
  */
+/** Tooltip for the requests column: the sidecar's quota signals, or nothing when it observed none. */
+export function describeCliProxyAccountQuota(
+  usage: CliProxyAccountUsage | undefined,
+): string | undefined {
+  const quota = usage?.quota;
+  if (quota === undefined) return undefined;
+  const signals = Object.entries(quota.signals).map(([key, value]) => `${key}: ${value}`);
+  return signals.length === 0 ? undefined : `Quota ${signals.join(", ")}`;
+}
+
 export function labelCliProxyUsageCredential(key: string, index: number): string {
   const separator = key.indexOf("|");
   const baseUrl = separator === -1 ? "" : key.slice(0, separator).trim();

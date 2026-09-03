@@ -70,6 +70,15 @@ describe("cliproxy api contract", () => {
       updatedAt: "2026-09-02T00:00:00.000Z",
     });
     expect(Exit.isSuccess(account)).toBe(true);
+    const withUsage = decodeAccount({
+      id: "codex-a.json",
+      provider: "codex",
+      label: "a@example.com",
+      disabled: false,
+      updatedAt: "2026-09-02T00:00:00.000Z",
+      usage: { success: 12, failed: 1, quota: { signals: { "5h": "ok" } } },
+    });
+    expect(Exit.isSuccess(withUsage) && withUsage.value.usage?.success).toBe(12);
     const bundle = decodeBundle({
       version: 2,
       generatedAt: "2026-09-02T00:00:00.000Z",
