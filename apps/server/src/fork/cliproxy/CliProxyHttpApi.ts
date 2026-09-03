@@ -432,6 +432,15 @@ export const cliProxyHttpApiLayer = HttpApiBuilder.group(
             yield* call(Ignored, `/auth-files?name=${encodeURIComponent(id)}`, {
               method: "DELETE",
             }).pipe(Effect.mapError(notFoundAs(id)));
+            // The sidecar removed the file; the tombstone carries the deletion to the other environments.
+            yield* sync.recordTombstone(id).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("cliproxy: deletion not recorded for sync", {
+                  id,
+                  cause: error.message,
+                }),
+              ),
+            );
             return { ok: true as const };
           }),
         ),
@@ -490,7 +499,7 @@ export const cliProxyHttpApiLayer = HttpApiBuilder.group(
         withWrite(
           args.endpoint.name,
           requireFlag.pipe(
-            Effect.andThen(sync.applyPush(args.payload.entries)),
+            Effect.andThen(sync.applyPush(args.payload.entries, args.payload.tombstones ?? [])),
             Effect.catchTag("CliProxySyncNotConfigured", () => unavailable("sync-not-configured")),
           ),
         ),
