@@ -47,7 +47,7 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ForkFlags from "../ForkFlags.ts";
-import { cliproxyDirectories } from "./CliProxyConfig.ts";
+import { cliproxyAuthsDir, cliproxyDirectories } from "./CliProxyConfig.ts";
 import * as CliProxy from "./CliProxyService.ts";
 import * as CliProxySync from "./CliProxySync.ts";
 
@@ -142,7 +142,10 @@ export const cliProxyHttpApiLayer = HttpApiBuilder.group(
     const config = yield* ServerConfig.ServerConfig;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const { authsDir } = cliproxyDirectories(config.baseDir, path);
+    const directories = cliproxyDirectories(config.baseDir, path);
+    const currentAuthsDir = flags.config.pipe(
+      Effect.map((forkConfig) => cliproxyAuthsDir(forkConfig.cliproxy, directories, path)),
+    );
     const loginSessions = yield* Ref.make<ReadonlyMap<string, LoginSession>>(new Map());
 
     const unavailable = (
@@ -226,7 +229,8 @@ export const cliProxyHttpApiLayer = HttpApiBuilder.group(
         : error;
 
     const fileMtime = (name: string) =>
-      fs.stat(path.join(authsDir, name)).pipe(
+      currentAuthsDir.pipe(
+        Effect.flatMap((authsDir) => fs.stat(path.join(authsDir, name))),
         Effect.map((info) => Option.map(info.mtime, (date) => date.toISOString())),
         Effect.orElseSucceed(() => Option.none<string>()),
       );
