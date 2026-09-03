@@ -33,6 +33,7 @@ export default defineConfig({
       "node_modules",
       "pnpm-lock.yaml",
       "*.tsbuildinfo",
+      "fork/SEAMS.md", // fork: base (generated table; prettier realigns it)
       "**/routeTree.gen.ts",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
