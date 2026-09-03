@@ -1,5 +1,6 @@
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
+import { FORK_CLIPROXY_SETTINGS_SEARCH_ITEMS } from "../../fork/forkSettingsSearch"; // fork: cliproxy
 
 export type SettingsPath =
   | "/settings/general"
@@ -9,6 +10,7 @@ export type SettingsPath =
   | "/settings/integrations"
   | "/settings/source-control"
   | "/settings/connections"
+  | "/settings/prism" // fork: cliproxy
   | "/settings/archived";
 
 export interface SettingsSearchItem {
@@ -51,6 +53,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
+  "/settings/prism": "Prism", // fork: cliproxy
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
@@ -308,24 +311,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["fork flags T3FORK fork.json update-check cliproxy"],
   }, // fork: base
-  {
-    id: "cliproxy-accounts",
-    title: "Accounts (CLIProxyAPI)",
-    to: "/settings/general",
-    searchTerms: ["cliproxy proxy sidecar pool oauth claude codex status sync weight enabled"],
-  }, // fork: cliproxy
-  {
-    id: "cliproxy-add-account",
-    title: "Add account",
-    to: "/settings/general",
-    searchTerms: ["cliproxy sign in login oauth provider codex anthropic antigravity xai kimi"],
-  }, // fork: cliproxy
-  {
-    id: "cliproxy-routing-strategy",
-    title: "Routing strategy",
-    to: "/settings/general",
-    searchTerms: ["cliproxy round robin weighted fill first load balancing"],
-  }, // fork: cliproxy
+  ...FORK_CLIPROXY_SETTINGS_SEARCH_ITEMS, // fork: cliproxy
   {
     id: "keybindings",
     title: "Keybindings",

@@ -159,7 +159,6 @@ import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { ForkSettingsSection } from "../../fork/ForkSettingsSection"; // fork: base
-import { CliProxyAccountsSection } from "../../fork/cliproxy/CliProxyAccountsSection"; // fork: cliproxy
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -2794,7 +2793,6 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
       <LegacyFeaturesSection />
       <ForkSettingsSection /> {/* fork: base */}
-      <CliProxyAccountsSection /> {/* fork: cliproxy */}
     </SettingsPageContainer>
   );
 }
