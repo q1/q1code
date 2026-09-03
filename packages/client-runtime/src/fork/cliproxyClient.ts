@@ -14,6 +14,8 @@
  *   sidecar state instead of an error toast.
  * - `CliProxyUpstreamError` (502): the sidecar refused; `message` is its text.
  * - `CliProxyNotFoundError` (404): unknown account or login session.
+ * - `CliProxyConfigError` (500): the sidecar took the change but `fork.json`
+ *   could not be written, so it will not survive a restart.
  * - `CliProxySyncFailedError` (500): a sync export or push failed.
  * - `EnvironmentAuthInvalidError` (401) / `EnvironmentScopeRequiredError`
  *   (403) and the transport errors every environment request can raise.
@@ -32,6 +34,7 @@ import {
   type CliProxyAccount,
   type CliProxyAccountId,
   type CliProxyAccountPatch,
+  type CliProxyConfigError,
   CliProxyHttpApi,
   type CliProxyLoginProvider,
   type CliProxyLoginStarted,
@@ -79,12 +82,14 @@ export interface CliProxyClientInput {
   readonly timeoutMs?: number;
 }
 
-export type CliProxyClientError =
+type DeclaredError =
   | CliProxyUnavailableError
   | CliProxyUpstreamError
   | CliProxyNotFoundError
-  | CliProxySyncFailedError
-  | RemoteEnvironmentRequestError;
+  | CliProxyConfigError
+  | CliProxySyncFailedError;
+
+export type CliProxyClientError = DeclaredError | RemoteEnvironmentRequestError;
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 
@@ -93,16 +98,11 @@ const DECLARED_TAGS = new Set([
   "CliProxyUnavailableError",
   "CliProxyUpstreamError",
   "CliProxyNotFoundError",
+  "CliProxyConfigError",
   "CliProxySyncFailedError",
 ]);
 
-const isDeclaredError = (
-  error: unknown,
-): error is
-  | CliProxyUnavailableError
-  | CliProxyUpstreamError
-  | CliProxyNotFoundError
-  | CliProxySyncFailedError =>
+const isDeclaredError = (error: unknown): error is DeclaredError =>
   typeof error === "object" &&
   error !== null &&
   "_tag" in error &&
@@ -113,14 +113,7 @@ type Api = HttpApiClient.ForApi<typeof CliProxyHttpApi>;
 
 type Outcome<A> =
   | { readonly _tag: "ok"; readonly value: A }
-  | {
-      readonly _tag: "declared";
-      readonly error:
-        | CliProxyUnavailableError
-        | CliProxyUpstreamError
-        | CliProxyNotFoundError
-        | CliProxySyncFailedError;
-    };
+  | { readonly _tag: "declared"; readonly error: DeclaredError };
 
 /**
  * One authenticated call: build the request URL for the DPoP proof exactly the

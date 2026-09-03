@@ -7,9 +7,13 @@
  * Reads need `orchestration:read`; mutations and both sync endpoints need
  * `access:write`. With the flag off or the sidecar not ready every endpoint
  * except `status` and `sync/status` answers 503 with the sidecar state.
+ *
+ * `PUT routing` also writes `cliproxy.routingStrategy` into `fork.json`, so the
+ * strategy the sidecar is told now is the one it is started with next time.
  */
 import {
   type CliProxyAccount,
+  CliProxyConfigError,
   CliProxyHttpApi,
   type CliProxyLoginStatus,
   CliProxyNotFoundError,
@@ -26,6 +30,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClientResponse } from "effect/unstable/http";
@@ -260,6 +265,20 @@ export const cliProxyHttpApiLayer = HttpApiBuilder.group(
         }
       });
 
+    /** Persist the strategy next to whatever else the file holds; only the one key moves. */
+    const persistRoutingStrategy = (strategy: CliProxyRoutingStrategy) =>
+      flags
+        .update((raw) => ({
+          ...raw,
+          cliproxy: {
+            ...(Predicate.isObject(raw.cliproxy) && !Array.isArray(raw.cliproxy)
+              ? raw.cliproxy
+              : {}),
+            routingStrategy: strategy,
+          },
+        }))
+        .pipe(Effect.mapError((error) => new CliProxyConfigError({ message: error.message })));
+
     const getRouting = call(RoutingResponse, "/routing/strategy").pipe(
       Effect.flatMap(({ strategy }) =>
         isRoutingStrategy(strategy)
@@ -427,6 +446,7 @@ export const cliProxyHttpApiLayer = HttpApiBuilder.group(
             Effect.andThen(
               call(Ignored, "/routing/strategy", json("PUT", { value: args.payload.strategy })),
             ),
+            Effect.andThen(persistRoutingStrategy(args.payload.strategy)),
             Effect.andThen(getRouting),
           ),
         ),
