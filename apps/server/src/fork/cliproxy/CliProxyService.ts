@@ -1,20 +1,39 @@
 /**
- * CliProxyService - the CLIProxyAPI sidecar as a supervised child of the server.
+ * CliProxyService - CLIProxyAPI as a supervised child of the server, or as an
+ * externally run proxy the server only manages.
  *
  * Off by default: nothing is spawned, written, or published unless the
- * `cliproxy` fork flag is on. When it is, the service renders `config.yaml`,
- * resolves the binary, spawns `cli-proxy-api -config <path>`, waits for the
- * port and the management API, and publishes the endpoint for the provider
- * seams. Exits and failed starts restart with capped backoff. The flag turning
- * off (or server shutdown) interrupts the supervisor, which kills the child.
+ * `cliproxy` fork flag is on. When it is, `fork.json` `cliproxy.mode` decides:
  *
- * The launcher, readiness probe, and restart schedule are services so tests
- * drive the state machine without a binary or a clock.
+ * - `sidecar` (default): render `config.yaml`, resolve the binary, spawn
+ *   `cli-proxy-api -config <path>`, wait for the port and the management API,
+ *   publish the endpoint for the provider seams. Exits and failed starts
+ *   restart with capped backoff.
+ * - `external`: read the management secret and client API key from the secret
+ *   store, probe the configured `baseUrl`'s management API, publish the
+ *   endpoint, and keep probing on a timer; a failed probe drops to `failed` and
+ *   unpublishes, a later success comes back as `ready` (one reconnect).
+ *
+ * The flag turning off (or server shutdown) interrupts the supervisor, which
+ * kills the child or stops the monitor. `restart` interrupts the current run
+ * so the supervisor starts over right away; in external mode that is a fresh
+ * secret read and an immediate probe.
+ *
+ * The launcher, readiness probe, restart schedule, and health interval are
+ * services so tests drive the state machine without a binary or a clock.
  */
 import * as NodeNet from "node:net";
 
 import { CLIPROXY_DEFAULT_PORT } from "@q1code/core/cliproxy";
+import {
+  CLIPROXY_DEFAULT_API_KEY_SECRET_NAME,
+  CLIPROXY_DEFAULT_MANAGEMENT_SECRET_NAME,
+  type CliProxyConfig,
+  type CliProxyMode,
+} from "@q1code/core/config";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -55,11 +74,20 @@ export type CliProxyState = "off" | "starting" | "ready" | "failed";
 
 export interface CliProxyStatus {
   readonly state: CliProxyState;
+  readonly mode: CliProxyMode;
+  /** Sidecar: the loopback port it listens on. External: the port of `baseUrl`. */
   readonly port: number;
+  /** When the current `state` was entered. */
+  readonly since: string;
+  /** Runs beyond the first since the flag turned on (supervisor restarts, manual restarts) plus external reconnects. */
+  readonly restarts: number;
+  /** Sidecar binary version; unknown for an external proxy. */
   readonly version?: string | undefined;
   readonly pid?: number | undefined;
-  /** Last failure message while `failed`; never carries a secret. */
-  readonly error?: string | undefined;
+  /** The proxy origin provider CLIs are pointed at, only while `ready`. */
+  readonly baseUrl?: string | undefined;
+  /** Last failure message; never carries a secret. Cleared once the proxy is ready. */
+  readonly lastError?: string | undefined;
 }
 
 export class CliProxySpawnError extends Schema.TaggedErrorClass<CliProxySpawnError>()(
@@ -86,6 +114,19 @@ export class CliProxyNotReady extends Schema.TaggedErrorClass<CliProxyNotReady>(
   }
 }
 
+/** One management probe against an external proxy failed; `detail` is transport or HTTP text with the secret redacted. */
+export class CliProxyProbeFailed extends Schema.TaggedErrorClass<CliProxyProbeFailed>()(
+  "CliProxyProbeFailed",
+  {
+    baseUrl: Schema.String,
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `CLIProxyAPI at ${this.baseUrl} did not answer the management probe: ${this.detail}`;
+  }
+}
+
 export class CliProxyExited extends Schema.TaggedErrorClass<CliProxyExited>()("CliProxyExited", {
   code: Schema.Number,
 }) {
@@ -102,6 +143,29 @@ export class CliProxySecretError extends Schema.TaggedErrorClass<CliProxySecretE
 ) {
   override get message(): string {
     return "Failed to load the CLIProxyAPI secrets.";
+  }
+}
+
+/** External mode needs a secret the store does not hold; the message says how to add it. */
+export class CliProxySecretMissing extends Schema.TaggedErrorClass<CliProxySecretMissing>()(
+  "CliProxySecretMissing",
+  {
+    name: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `secret "${this.name}" is not set; store it with: q1code fork secret set ${this.name}`;
+  }
+}
+
+export class CliProxyExternalConfigError extends Schema.TaggedErrorClass<CliProxyExternalConfigError>()(
+  "CliProxyExternalConfigError",
+  {
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.detail;
   }
 }
 
@@ -147,7 +211,11 @@ export class CliProxyLauncher extends Context.Service<
   }
 >()("t3/fork/cliproxy/CliProxyService/CliProxyLauncher") {}
 
-/** Blocks until the proxy answers on its port and its management API. Tests provide a fake. */
+/**
+ * `awaitReady` blocks until a freshly spawned sidecar answers on its port and
+ * its management API; `probe` is one management call against any proxy origin.
+ * Tests provide a fake.
+ */
 export class CliProxyReadiness extends Context.Service<
   CliProxyReadiness,
   {
@@ -155,6 +223,10 @@ export class CliProxyReadiness extends Context.Service<
       readonly port: number;
       readonly managementSecret: string;
     }) => Effect.Effect<void, CliProxyNotReady>;
+    readonly probe: (input: {
+      readonly baseUrl: string;
+      readonly managementSecret: string;
+    }) => Effect.Effect<void, CliProxyProbeFailed>;
   }
 >()("t3/fork/cliproxy/CliProxyService/CliProxyReadiness") {}
 
@@ -172,6 +244,12 @@ export const CliProxyRestartSchedule = Context.Reference<Schedule.Schedule<unkno
   },
 );
 
+/** How often external mode re-probes the proxy. Tests shrink it. */
+export const CliProxyHealthInterval = Context.Reference<Duration.Duration>(
+  "t3/fork/cliproxy/CliProxyHealthInterval",
+  { defaultValue: () => Duration.seconds(30) },
+);
+
 export class CliProxyService extends Context.Service<
   CliProxyService,
   {
@@ -180,6 +258,13 @@ export class CliProxyService extends Context.Service<
     readonly changes: Stream.Stream<CliProxyStatus>;
     /** Base URL and API key for provider wiring; `none` unless ready. */
     readonly endpoint: Effect.Effect<Option.Option<CliProxyEndpoint>>;
+    /**
+     * Start the current run over now (sidecar: kill and respawn; external:
+     * re-read the secrets and probe) and answer once the state settles as
+     * `ready` or `failed`, or after `READY_TIMEOUT`. With the flag off it only
+     * reports the status.
+     */
+    readonly restart: Effect.Effect<CliProxyStatus>;
     /** Server-side only: calls `/v0/management<path>` with the management secret attached. */
     readonly management: {
       readonly request: (
@@ -192,9 +277,8 @@ export class CliProxyService extends Context.Service<
   }
 >()("t3/fork/cliproxy/CliProxyService") {}
 
-const SECRET_API_KEY = "cliproxy-api-key";
-const SECRET_MANAGEMENT = "cliproxy-management-secret";
 const SECRET_BYTES = 32;
+const MANAGEMENT_PROBE_PATH = "/v0/management/latest-version";
 
 const toHex = (bytes: Uint8Array) =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -206,6 +290,30 @@ export const redactSecrets = (line: string, secrets: ReadonlyArray<string>): str
     line,
   );
 
+/** Pure: `cliproxy.external.baseUrl` as an origin plus its effective port, or undefined when it is not a bare http(s) origin. */
+export const parseCliProxyBaseUrl = (
+  raw: string,
+): { readonly baseUrl: string; readonly port: number } | undefined => {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return undefined;
+  }
+  const isHttp = url.protocol === "http:" || url.protocol === "https:";
+  const bare =
+    (url.pathname === "/" || url.pathname === "") &&
+    url.search === "" &&
+    url.hash === "" &&
+    url.username === "" &&
+    url.password === "";
+  if (!isHttp || !bare) return undefined;
+  const port = url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
+  return { baseUrl: url.origin, port };
+};
+
+const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const flags = yield* ForkFlags.ForkFlagsService;
@@ -214,30 +322,54 @@ const make = Effect.gen(function* () {
   const launcher = yield* CliProxyLauncher;
   const readiness = yield* CliProxyReadiness;
   const restartSchedule = yield* CliProxyRestartSchedule;
+  const healthInterval = yield* CliProxyHealthInterval;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directories = cliproxyDirectories(config.baseDir, path);
 
-  const statusRef = yield* Ref.make<CliProxyStatus>({ state: "off", port: CLIPROXY_DEFAULT_PORT });
+  const statusRef = yield* Ref.make<CliProxyStatus>({
+    state: "off",
+    mode: "sidecar",
+    port: CLIPROXY_DEFAULT_PORT,
+    since: yield* nowIso,
+    restarts: 0,
+  });
   const endpointRef = yield* Ref.make<Option.Option<CliProxyEndpoint>>(Option.none());
-  const managementRef = yield* Ref.make<Option.Option<{ port: number; secret: string }>>(
+  const managementRef = yield* Ref.make<Option.Option<{ baseUrl: string; secret: string }>>(
     Option.none(),
   );
   const statusPubSub = yield* PubSub.unbounded<CliProxyStatus>();
   const supervisorRef = yield* Ref.make<Option.Option<Fiber.Fiber<void>>>(Option.none());
+  // Completing it makes the supervisor abandon the current run and start over.
+  const restartRef = yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(Option.none());
+  const runsRef = yield* Ref.make(0);
   const lifecycle = yield* Semaphore.make(1);
   const runScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(runScope, Exit.void));
 
-  const setStatus = (next: CliProxyStatus) =>
-    Ref.set(statusRef, next).pipe(Effect.andThen(PubSub.publish(statusPubSub, next)));
-  const patchStatus = (patch: Partial<CliProxyStatus>) =>
-    Ref.get(statusRef).pipe(Effect.flatMap((current) => setStatus({ ...current, ...patch })));
+  /** Apply a patch derived from the current status; entering a new state stamps `since`. */
+  const updateStatus = (update: (current: CliProxyStatus) => Partial<CliProxyStatus>) =>
+    Effect.gen(function* () {
+      const current = yield* Ref.get(statusRef);
+      const patch = update(current);
+      const entered = patch.state !== undefined && patch.state !== current.state;
+      const next: CliProxyStatus = {
+        ...current,
+        ...patch,
+        since: entered ? yield* nowIso : current.since,
+      };
+      yield* Ref.set(statusRef, next);
+      yield* PubSub.publish(statusPubSub, next);
+    });
+  const patchStatus = (patch: Partial<CliProxyStatus>) => updateStatus(() => patch);
 
   const publish = (endpoint: Option.Option<CliProxyEndpoint>) =>
     Ref.set(endpointRef, endpoint).pipe(
       Effect.andThen(Effect.sync(() => publishCliProxyEndpoint(Option.getOrUndefined(endpoint)))),
     );
+
+  const setManagement = (management: Option.Option<{ baseUrl: string; secret: string }>) =>
+    Ref.set(managementRef, management);
 
   const loadSecret = (name: string) =>
     secrets.getOrCreateRandom(name, SECRET_BYTES).pipe(
@@ -245,86 +377,199 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) => new CliProxySecretError({ cause })),
     );
 
+  /** External mode never generates: a missing or blank secret is a configuration error with the fix in its message. */
+  const readStoredSecret = (name: string) =>
+    secrets.get(name).pipe(
+      Effect.mapError((cause) => new CliProxySecretError({ cause })),
+      Effect.flatMap((stored) => {
+        const value = Option.isSome(stored) ? new TextDecoder().decode(stored.value).trim() : "";
+        return value === ""
+          ? Effect.fail(new CliProxySecretMissing({ name }))
+          : Effect.succeed(value);
+      }),
+    );
+
   const ensureDirectory = (directory: string) =>
     fs
       .makeDirectory(directory, { recursive: true })
       .pipe(Effect.andThen(fs.chmod(directory, 0o700)));
 
-  // One start-to-exit run. Fails on every way the sidecar can stop being
-  // useful so the supervisor's retry drives the restart.
+  const materializeCodexHome = (endpoint: CliProxyEndpoint) =>
+    materializeCodexProxyHome({ homeDir: directories.codexHomeDir, endpoint }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("cliproxy: codex proxy home not materialized", {
+          cause: error.message,
+        }),
+      ),
+    );
+
+  const becomeReady = (
+    endpoint: CliProxyEndpoint,
+    managementSecret: string,
+    patch: (current: CliProxyStatus) => Partial<CliProxyStatus>,
+  ) =>
+    setManagement(Option.some({ baseUrl: endpoint.baseUrl, secret: managementSecret })).pipe(
+      Effect.andThen(publish(Option.some(endpoint))),
+      Effect.andThen(
+        updateStatus((current) => ({
+          ...patch(current),
+          state: "ready",
+          baseUrl: endpoint.baseUrl,
+          lastError: undefined,
+        })),
+      ),
+    );
+
+  const unpublish = publish(Option.none()).pipe(Effect.andThen(setManagement(Option.none())));
+
+  type Begin = (port: number) => Effect.Effect<void>;
+
+  // Spawn, wait for readiness, publish, then fail on the child's exit so the
+  // supervisor's retry drives the restart.
+  const runSidecar = Effect.fn("cliproxy.runSidecar")(function* (
+    section: CliProxyConfig,
+    begin: Begin,
+  ) {
+    const port = section.port ?? CLIPROXY_DEFAULT_PORT;
+    yield* begin(port);
+
+    const binary = yield* binaries.resolve({
+      binaryPath: section.binaryPath,
+      version: section.releaseVersion,
+    });
+    yield* patchStatus({ version: binary.version });
+
+    yield* ensureDirectory(directories.rootDir);
+    yield* ensureDirectory(directories.authsDir);
+    const apiKey = yield* loadSecret(CLIPROXY_DEFAULT_API_KEY_SECRET_NAME);
+    const managementSecret = yield* loadSecret(CLIPROXY_DEFAULT_MANAGEMENT_SECRET_NAME);
+    const secretValues = [apiKey, managementSecret];
+    yield* writeCliProxyConfig(
+      directories.configPath,
+      renderCliProxyConfig({
+        port,
+        authDir: directories.authsDir,
+        apiKey,
+        managementSecret,
+        routingStrategy: section.routingStrategy,
+      }),
+    );
+    const endpoint: CliProxyEndpoint = { baseUrl: `http://127.0.0.1:${port}`, apiKey };
+    yield* materializeCodexHome(endpoint);
+
+    const child = yield* launcher.launch({
+      binaryPath: binary.path,
+      args: ["-config", directories.configPath],
+      cwd: directories.rootDir,
+    });
+    yield* patchStatus({ pid: child.pid });
+    yield* child.output.pipe(
+      Stream.runForEach((line) =>
+        Effect.logDebug(`cliproxy: ${redactSecrets(line, secretValues)}`),
+      ),
+      Effect.ignoreCause(),
+      Effect.forkScoped,
+    );
+
+    const exited = child.exit.pipe(
+      Effect.flatMap((code) => Effect.fail(new CliProxyExited({ code }))),
+    );
+    yield* Effect.raceFirst(readiness.awaitReady({ port, managementSecret }), exited);
+
+    yield* becomeReady(endpoint, managementSecret, () => ({}));
+    yield* Effect.logInfo("cliproxy: ready", { port, version: binary.version, pid: child.pid });
+    return yield* exited;
+  });
+
+  // Validate the section and the secrets once, then probe on the health
+  // interval until interrupted. Only the setup can fail; a probe failure is a
+  // `failed` status the next probe can undo.
+  const runExternal = Effect.fn("cliproxy.runExternal")(function* (
+    section: CliProxyConfig,
+    begin: Begin,
+  ) {
+    const external = section.external;
+    const parsed = external === undefined ? undefined : parseCliProxyBaseUrl(external.baseUrl);
+    yield* begin(parsed?.port ?? CLIPROXY_DEFAULT_PORT);
+    if (external === undefined) {
+      return yield* new CliProxyExternalConfigError({
+        detail: 'cliproxy.mode is "external" but fork.json has no cliproxy.external section',
+      });
+    }
+    if (parsed === undefined) {
+      return yield* new CliProxyExternalConfigError({
+        detail: `cliproxy.external.baseUrl must be an absolute http(s) origin such as http://127.0.0.1:8317, got "${external.baseUrl}"`,
+      });
+    }
+    const managementSecret = yield* readStoredSecret(
+      external.managementSecretName ?? CLIPROXY_DEFAULT_MANAGEMENT_SECRET_NAME,
+    );
+    const apiKey = yield* readStoredSecret(
+      external.apiKeySecretName ?? CLIPROXY_DEFAULT_API_KEY_SECRET_NAME,
+    );
+    const endpoint: CliProxyEndpoint = { baseUrl: parsed.baseUrl, apiKey };
+    yield* materializeCodexHome(endpoint);
+
+    let wasReady = false;
+    while (true) {
+      const failure = yield* readiness.probe({ baseUrl: parsed.baseUrl, managementSecret }).pipe(
+        Effect.as(undefined),
+        Effect.catch((error) => Effect.succeed(error.message)),
+      );
+      const current = yield* Ref.get(statusRef);
+      if (failure === undefined) {
+        if (current.state !== "ready") {
+          yield* becomeReady(endpoint, managementSecret, (status) => ({
+            restarts: wasReady ? status.restarts + 1 : status.restarts,
+          }));
+          yield* Effect.logInfo("cliproxy: external proxy ready", { baseUrl: parsed.baseUrl });
+          wasReady = true;
+        }
+      } else if (current.state !== "failed" || current.lastError !== failure) {
+        yield* unpublish;
+        yield* patchStatus({ state: "failed", baseUrl: undefined, lastError: failure });
+        yield* Effect.logWarning("cliproxy: external proxy not reachable", {
+          baseUrl: parsed.baseUrl,
+          cause: failure,
+        });
+      }
+      yield* Effect.sleep(healthInterval);
+    }
+  });
+
+  // One run, in whichever mode `fork.json` names right now. Every way the
+  // proxy can stop being useful is a failure so the supervisor restarts it.
   const runOnce = Effect.scoped(
     Effect.gen(function* () {
-      const forkConfig = yield* flags.config;
-      const section = forkConfig.cliproxy ?? {};
-      const port = section.port ?? CLIPROXY_DEFAULT_PORT;
-      yield* setStatus({ state: "starting", port });
-
-      const binary = yield* binaries.resolve({
-        binaryPath: section.binaryPath,
-        version: section.releaseVersion,
-      });
-      yield* patchStatus({ version: binary.version });
-
-      yield* ensureDirectory(directories.rootDir);
-      yield* ensureDirectory(directories.authsDir);
-      const apiKey = yield* loadSecret(SECRET_API_KEY);
-      const managementSecret = yield* loadSecret(SECRET_MANAGEMENT);
-      const secretValues = [apiKey, managementSecret];
-      yield* writeCliProxyConfig(
-        directories.configPath,
-        renderCliProxyConfig({
+      const section = (yield* flags.config).cliproxy ?? {};
+      const mode = section.mode ?? "sidecar";
+      const run = yield* Ref.getAndUpdate(runsRef, (count) => count + 1);
+      const begin: Begin = (port) =>
+        updateStatus((current) => ({
+          state: "starting",
+          mode,
           port,
-          authDir: directories.authsDir,
-          apiKey,
-          managementSecret,
-          routingStrategy: section.routingStrategy,
-        }),
-      );
-      const endpoint: CliProxyEndpoint = { baseUrl: `http://127.0.0.1:${port}`, apiKey };
-      yield* materializeCodexProxyHome({ homeDir: directories.codexHomeDir, endpoint }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("cliproxy: codex proxy home not materialized", {
-            cause: error.message,
-          }),
-        ),
-      );
-
-      const child = yield* launcher.launch({
-        binaryPath: binary.path,
-        args: ["-config", directories.configPath],
-        cwd: directories.rootDir,
-      });
-      yield* patchStatus({ pid: child.pid });
-      yield* child.output.pipe(
-        Stream.runForEach((line) =>
-          Effect.logDebug(`cliproxy: ${redactSecrets(line, secretValues)}`),
-        ),
-        Effect.ignoreCause(),
-        Effect.forkScoped,
-      );
-
-      const exited = child.exit.pipe(
-        Effect.flatMap((code) => Effect.fail(new CliProxyExited({ code }))),
-      );
-      yield* Effect.raceFirst(readiness.awaitReady({ port, managementSecret }), exited);
-
-      yield* Ref.set(managementRef, Option.some({ port, secret: managementSecret }));
-      yield* publish(Option.some(endpoint));
-      yield* patchStatus({ state: "ready" });
-      yield* Effect.logInfo("cliproxy: ready", { port, version: binary.version, pid: child.pid });
-      return yield* exited;
-    }).pipe(
-      Effect.ensuring(
-        publish(Option.none()).pipe(Effect.andThen(Ref.set(managementRef, Option.none()))),
-      ),
-    ),
+          pid: undefined,
+          version: undefined,
+          baseUrl: undefined,
+          restarts: run === 0 ? 0 : current.restarts + 1,
+        }));
+      return mode === "external"
+        ? yield* runExternal(section, begin)
+        : yield* runSidecar(section, begin);
+    }).pipe(Effect.ensuring(unpublish)),
   );
 
-  const supervise = runOnce.pipe(
+  const superviseOnce = runOnce.pipe(
     Effect.tapError((error) =>
-      patchStatus({ state: "failed", pid: undefined, error: error.message }).pipe(
+      patchStatus({
+        state: "failed",
+        pid: undefined,
+        baseUrl: undefined,
+        lastError: error.message,
+      }).pipe(
         Effect.andThen(
-          Effect.logWarning("cliproxy: sidecar stopped, restarting", { cause: error.message }),
+          Effect.logWarning("cliproxy: proxy stopped, restarting", { cause: error.message }),
         ),
       ),
     ),
@@ -332,8 +577,21 @@ const make = Effect.gen(function* () {
     Effect.ignoreCause({ log: true }),
   );
 
+  // Each pass owns one restart signal. When it fires, the current run (or the
+  // backoff it is sleeping in) is interrupted and the next pass begins with a
+  // fresh schedule; when the schedule itself gives up, only a signal continues.
+  const supervise = Effect.gen(function* () {
+    while (true) {
+      const restartRequested = yield* Deferred.make<void>();
+      yield* Ref.set(restartRef, Option.some(restartRequested));
+      yield* Effect.raceFirst(superviseOnce, Deferred.await(restartRequested));
+      yield* Deferred.await(restartRequested);
+    }
+  });
+
   const start = Effect.gen(function* () {
     if (Option.isSome(yield* Ref.get(supervisorRef))) return;
+    yield* Ref.set(runsRef, 0);
     const fiber = yield* supervise.pipe(Effect.forkIn(runScope));
     yield* Ref.set(supervisorRef, Option.some(fiber));
   });
@@ -342,7 +600,15 @@ const make = Effect.gen(function* () {
     const fiber = yield* Ref.getAndSet(supervisorRef, Option.none());
     if (Option.isNone(fiber)) return;
     yield* Fiber.interrupt(fiber.value);
-    yield* setStatus({ state: "off", port: (yield* Ref.get(statusRef)).port });
+    yield* Ref.set(restartRef, Option.none());
+    yield* patchStatus({
+      state: "off",
+      pid: undefined,
+      version: undefined,
+      baseUrl: undefined,
+      lastError: undefined,
+      restarts: 0,
+    });
     yield* Effect.logInfo("cliproxy: stopped");
   });
 
@@ -356,6 +622,27 @@ const make = Effect.gen(function* () {
     Effect.forkIn(runScope),
   );
 
+  const restart = Effect.gen(function* () {
+    const signal = yield* Ref.get(restartRef);
+    if (Option.isNone(signal)) return yield* Ref.get(statusRef);
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        // Subscribe first so the `starting` that follows the signal cannot slip past.
+        const subscription = yield* PubSub.subscribe(statusPubSub);
+        yield* Deferred.succeed(signal.value, undefined);
+        // `off` settles it too: the flag turned off while we waited.
+        const settled = Effect.gen(function* () {
+          while (true) {
+            const status = yield* PubSub.take(subscription);
+            if (status.state !== "starting") return status;
+          }
+        });
+        const outcome = yield* settled.pipe(Effect.timeoutOption(READY_TIMEOUT));
+        return Option.isSome(outcome) ? outcome.value : yield* Ref.get(statusRef);
+      }),
+    );
+  });
+
   const request: CliProxyService["Service"]["management"]["request"] = (requestPath, options) =>
     Effect.gen(function* () {
       const management = yield* Ref.get(managementRef);
@@ -364,7 +651,7 @@ const make = Effect.gen(function* () {
       }
       const client = yield* HttpClient.HttpClient;
       let httpRequest = HttpClientRequest.make(options?.method ?? "GET")(
-        `http://127.0.0.1:${management.value.port}/v0/management${requestPath}`,
+        `${management.value.baseUrl}/v0/management${requestPath}`,
         { headers: options?.headers },
       ).pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${management.value.secret}`));
       if (options?.body !== undefined) {
@@ -384,6 +671,7 @@ const make = Effect.gen(function* () {
     status: Ref.get(statusRef),
     changes: Stream.fromPubSub(statusPubSub),
     endpoint: Ref.get(endpointRef),
+    restart,
     management: { request },
     codexProxyHomePath: directories.codexHomeDir,
   });
@@ -403,16 +691,15 @@ const tcpConnect = (port: number) =>
     return Effect.sync(() => socket.destroy());
   });
 
-const managementProbe = (port: number, secret: string) =>
+/** `GET /v0/management/latest-version` with the bearer secret; the cheapest authenticated management call. */
+const managementProbe = (baseUrl: string, secret: string) =>
   HttpClient.HttpClient.pipe(
     Effect.flatMap((client) =>
-      client.get(`http://127.0.0.1:${port}/v0/management/latest-version`, {
+      client.get(`${baseUrl}${MANAGEMENT_PROBE_PATH}`, {
         headers: { Authorization: `Bearer ${secret}` },
       }),
     ),
-    Effect.map((response) => response.status === 200),
     Effect.provide(FetchHttpClient.layer),
-    Effect.orElseSucceed(() => false),
   );
 
 const untilTrue = (probe: Effect.Effect<boolean>, onTimeout: CliProxyNotReady) =>
@@ -432,9 +719,35 @@ export const readinessLayer = Layer.succeed(
       untilTrue(tcpConnect(port), new CliProxyNotReady({ port, stage: "tcp" })).pipe(
         Effect.andThen(
           untilTrue(
-            managementProbe(port, managementSecret),
+            managementProbe(`http://127.0.0.1:${port}`, managementSecret).pipe(
+              Effect.map((response) => response.status === 200),
+              Effect.orElseSucceed(() => false),
+            ),
             new CliProxyNotReady({ port, stage: "management" }),
           ),
+        ),
+      ),
+    probe: ({ baseUrl, managementSecret }) =>
+      managementProbe(baseUrl, managementSecret).pipe(
+        Effect.mapError(
+          (error) =>
+            new CliProxyProbeFailed({
+              baseUrl,
+              detail: redactSecrets(error.message, [managementSecret]),
+            }),
+        ),
+        Effect.flatMap((response) =>
+          response.status === 200
+            ? Effect.void
+            : Effect.fail(
+                new CliProxyProbeFailed({
+                  baseUrl,
+                  detail:
+                    response.status === 401 || response.status === 403
+                      ? `HTTP ${response.status} from GET ${MANAGEMENT_PROBE_PATH}; check the management secret`
+                      : `HTTP ${response.status} from GET ${MANAGEMENT_PROBE_PATH}`,
+                }),
+              ),
         ),
       ),
   }),

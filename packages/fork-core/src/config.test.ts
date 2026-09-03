@@ -1,6 +1,11 @@
 import * as Exit from "effect/Exit";
 import { describe, expect, it } from "vite-plus/test";
-import { decodeForkConfig, decodeForkConfigJson } from "./config.ts";
+import {
+  CLIPROXY_DEFAULT_API_KEY_SECRET_NAME,
+  CLIPROXY_DEFAULT_MANAGEMENT_SECRET_NAME,
+  decodeForkConfig,
+  decodeForkConfigJson,
+} from "./config.ts";
 
 describe("fork config", () => {
   it("decodes a flags section", () => {
@@ -78,6 +83,36 @@ describe("fork config", () => {
         decodeForkConfig({ cliproxy: { sync: { role: "primary", intervalSeconds: 1 } } }),
       ),
     ).toBe(true);
+  });
+
+  it("decodes the cliproxy mode and external section, leaving the mode unset by default", () => {
+    const exit = decodeForkConfig({
+      cliproxy: {
+        mode: "external",
+        external: {
+          baseUrl: "http://127.0.0.1:8317",
+          managementSecretName: "prism-management",
+          authDir: "/var/lib/prism/auths",
+          extra: 1,
+        },
+      },
+    });
+    expect(Exit.isSuccess(exit) && exit.value).toEqual({
+      cliproxy: {
+        mode: "external",
+        external: {
+          baseUrl: "http://127.0.0.1:8317",
+          managementSecretName: "prism-management",
+          authDir: "/var/lib/prism/auths",
+        },
+      },
+    });
+    const sidecar = decodeForkConfig({ cliproxy: { port: 9000 } });
+    expect(Exit.isSuccess(sidecar) && sidecar.value.cliproxy?.mode).toBeUndefined();
+    expect(Exit.isFailure(decodeForkConfig({ cliproxy: { mode: "container" } }))).toBe(true);
+    expect(Exit.isFailure(decodeForkConfig({ cliproxy: { external: {} } }))).toBe(true);
+    expect(CLIPROXY_DEFAULT_MANAGEMENT_SECRET_NAME).toBe("cliproxy-management-secret");
+    expect(CLIPROXY_DEFAULT_API_KEY_SECRET_NAME).toBe("cliproxy-api-key");
   });
 
   it("rejects an out-of-range port or an unknown routing strategy", () => {
