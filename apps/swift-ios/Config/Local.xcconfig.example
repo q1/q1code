@@ -1,0 +1,32 @@
+// Local identity override for the SwiftUI client.
+//
+// Copy this file to Local.xcconfig (same directory, gitignored) and edit it to
+// build with your own Apple Developer team and bundle identifiers. Every key is
+// optional: an unset key keeps the upstream default from T3Code.xcconfig.
+// Nothing here is read by CI or committed.
+
+// Apple Developer team id used by automatic signing (Xcode > Settings >
+// Accounts). Required for device builds and archives; simulator builds with
+// CODE_SIGNING_ALLOWED=NO ignore it.
+DEVELOPMENT_TEAM = ABCDE12345
+
+// Bundle identifier prefix. Every bundle derives from it:
+//   app       <prefix>            (Debug: <prefix>.dev)
+//   widgets   <prefix>.widgets    (Debug: <prefix>.dev.widgets)
+//   share     <prefix>.sharing    (Debug: <prefix>.dev.sharing)
+//   tests     <prefix>.tests
+//   App Group group.<prefix>      (Debug: group.<prefix>.dev)
+// Register the App Group identifiers under your team before a device build;
+// widgets and the share extension need the shared container.
+T3CODE_BUNDLE_IDENTIFIER_PREFIX = com.example.t3code.swiftui
+
+// Home Screen display name per build configuration. Widget and share-extension
+// names stay upstream's (T3CODE_WIDGET_DISPLAY_NAME, T3CODE_SHARE_DISPLAY_NAME
+// in project.pbxproj) unless you override those too.
+T3CODE_DEBUG_DISPLAY_NAME = T3 Swift Dev
+T3CODE_RELEASE_DISPLAY_NAME = T3 Code SwiftUI
+
+// Optional T3 Connect settings (see README.md "Build configuration"). Leave
+// unset for direct pairing only.
+// T3CODE_CLERK_PUBLISHABLE_KEY =
+// T3CODE_RELAY_URL =

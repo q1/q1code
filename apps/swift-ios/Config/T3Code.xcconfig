@@ -1,0 +1,14 @@
+// Project-level identity defaults for the SwiftUI client. These values match
+// the upstream project; every target's bundle identifier, App Group, and
+// display name is derived from them in project.pbxproj.
+//
+// To build with your own Apple team and identifiers, copy Local.xcconfig.example
+// to Local.xcconfig (gitignored) and set the keys there. Local.xcconfig is
+// included last, so it wins over the defaults below. Settings passed on the
+// xcodebuild command line still override both.
+
+T3CODE_BUNDLE_IDENTIFIER_PREFIX = com.t3tools.t3code.swiftui
+T3CODE_DEBUG_DISPLAY_NAME = T3 Swift Dev
+T3CODE_RELEASE_DISPLAY_NAME = T3 Code SwiftUI
+
+#include? "Local.xcconfig"
