@@ -71,13 +71,36 @@ describe("cliproxy api contract", () => {
     });
     expect(Exit.isSuccess(account)).toBe(true);
     const bundle = decodeBundle({
-      version: 1,
+      version: 2,
       generatedAt: "2026-09-02T00:00:00.000Z",
       primaryEnvironmentId: "env-1",
       entries: [{ id: "codex-a.json", updatedAt: "2026-09-02T00:00:00.000Z", ciphertext: "AA==" }],
+      tombstones: [{ id: "gone.json", deletedAt: "2026-09-01T00:00:00.000Z" }],
     });
     expect(Exit.isSuccess(bundle)).toBe(true);
-    expect(Exit.isFailure(decodeBundle({ version: 2 }))).toBe(true);
+    expect(Exit.isFailure(decodeBundle({ version: 3 }))).toBe(true);
+  });
+
+  it("still decodes a version 1 bundle, which has no tombstones", () => {
+    const bundle = decodeBundle({
+      version: 1,
+      generatedAt: "2026-09-02T00:00:00.000Z",
+      primaryEnvironmentId: "env-1",
+      entries: [],
+    });
+    expect(Exit.isSuccess(bundle) && bundle.value.tombstones).toBeUndefined();
+    expect(Exit.isSuccess(bundle)).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeBundle({
+          version: 2,
+          generatedAt: "2026-09-02T00:00:00.000Z",
+          primaryEnvironmentId: "env-1",
+          entries: [],
+          tombstones: [{ id: "../escape.json", deletedAt: "2026-09-01T00:00:00.000Z" }],
+        }),
+      ),
+    ).toBe(true);
   });
 
   it("serializes the unavailable error with its reason and state", () => {

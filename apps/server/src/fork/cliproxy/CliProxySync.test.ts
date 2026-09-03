@@ -4,6 +4,7 @@ import { DEFAULT_FORK_FLAGS, type ForkFlagValues } from "@q1code/core/flags";
 import type { ForkConfig } from "@q1code/core/config";
 import { EnvironmentId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -25,37 +26,110 @@ import {
   CliProxySyncTransport,
   layerWithoutRuntime,
   planSyncMerge,
+  pruneSyncTombstones,
+  SYNC_TOMBSTONE_TTL_MILLIS,
 } from "./CliProxySync.ts";
 
 const T0 = "2026-09-02T10:00:00.000Z";
 const T1 = "2026-09-02T11:00:00.000Z";
 const T2 = "2026-09-02T12:00:00.000Z";
+const T3 = "2026-09-02T13:00:00.000Z";
 
 it("planSyncMerge pulls newer or missing remote files and pushes newer or missing local ones", () => {
   const plan = planSyncMerge(
-    [
-      { id: "same.json", updatedAt: T1 },
-      { id: "local-newer.json", updatedAt: T2 },
-      { id: "remote-newer.json", updatedAt: T0 },
-      { id: "local-only.json", updatedAt: T0 },
-    ],
-    [
-      { id: "same.json", updatedAt: T1 },
-      { id: "local-newer.json", updatedAt: T1 },
-      { id: "remote-newer.json", updatedAt: T1 },
-      { id: "remote-only.json", updatedAt: T0 },
-    ],
+    {
+      files: [
+        { id: "same.json", updatedAt: T1 },
+        { id: "local-newer.json", updatedAt: T2 },
+        { id: "remote-newer.json", updatedAt: T0 },
+        { id: "local-only.json", updatedAt: T0 },
+      ],
+    },
+    {
+      files: [
+        { id: "same.json", updatedAt: T1 },
+        { id: "local-newer.json", updatedAt: T1 },
+        { id: "remote-newer.json", updatedAt: T1 },
+        { id: "remote-only.json", updatedAt: T0 },
+      ],
+    },
   );
   assert.deepEqual([...plan.pull].sort(), ["remote-newer.json", "remote-only.json"]);
   assert.deepEqual([...plan.push].sort(), ["local-newer.json", "local-only.json"]);
+  assert.deepEqual(plan.deleteLocal, []);
+  assert.deepEqual(plan.deleteRemote, []);
+  assert.deepEqual(plan.tombstones, []);
 });
 
 it("planSyncMerge treats an unparseable stamp as older than everything", () => {
   const plan = planSyncMerge(
-    [{ id: "a.json", updatedAt: "garbage" }],
-    [{ id: "a.json", updatedAt: T0 }],
+    { files: [{ id: "a.json", updatedAt: "garbage" }] },
+    { files: [{ id: "a.json", updatedAt: T0 }] },
   );
-  assert.deepEqual(plan, { pull: ["a.json"], push: [] });
+  assert.deepEqual(plan, {
+    pull: ["a.json"],
+    push: [],
+    deleteLocal: [],
+    deleteRemote: [],
+    tombstones: [],
+  });
+});
+
+it("planSyncMerge lets a tombstone bury files on both sides unless a newer file beats it", () => {
+  const plan = planSyncMerge(
+    {
+      files: [
+        { id: "remote-deleted.json", updatedAt: T0 },
+        { id: "local-deleted.json", updatedAt: T0 },
+        { id: "recreated-here.json", updatedAt: T3 },
+        { id: "kept.json", updatedAt: T1 },
+      ],
+      tombstones: [
+        { id: "local-deleted.json", deletedAt: T1 },
+        { id: "recreated-there.json", deletedAt: T1 },
+        { id: "same-both.json", deletedAt: T0 },
+      ],
+    },
+    {
+      files: [
+        { id: "local-deleted.json", updatedAt: T1 },
+        { id: "recreated-there.json", updatedAt: T2 },
+        { id: "kept.json", updatedAt: T0 },
+      ],
+      tombstones: [
+        { id: "remote-deleted.json", deletedAt: T2 },
+        { id: "recreated-here.json", deletedAt: T2 },
+        { id: "same-both.json", deletedAt: T1 },
+      ],
+    },
+  );
+  // A file stamped at the tombstone's time is still buried; only strictly newer wins.
+  assert.deepEqual(plan.deleteLocal, ["local-deleted.json", "remote-deleted.json"]);
+  assert.deepEqual(plan.deleteRemote, ["local-deleted.json"]);
+  assert.deepEqual(plan.tombstones, [
+    { id: "local-deleted.json", deletedAt: T1 },
+    { id: "remote-deleted.json", deletedAt: T2 },
+    { id: "same-both.json", deletedAt: T1 },
+  ]);
+  assert.deepEqual([...plan.pull].sort(), ["recreated-there.json"]);
+  assert.deepEqual([...plan.push].sort(), ["kept.json", "recreated-here.json"]);
+});
+
+it("pruneSyncTombstones drops tombstones older than the TTL", () => {
+  const now = Date.parse(T2);
+  const stale = DateTime.formatIso(DateTime.makeUnsafe(now - SYNC_TOMBSTONE_TTL_MILLIS - 1));
+  const fresh = DateTime.formatIso(DateTime.makeUnsafe(now - SYNC_TOMBSTONE_TTL_MILLIS + 1));
+  assert.deepEqual(
+    pruneSyncTombstones(
+      [
+        { id: "stale.json", deletedAt: stale },
+        { id: "fresh.json", deletedAt: fresh },
+        { id: "garbage.json", deletedAt: "garbage" },
+      ],
+      now,
+    ),
+    [{ id: "fresh.json", deletedAt: fresh }],
+  );
 });
 
 const flagsLayer = (config: ForkConfig, cliproxy = true) => {
@@ -127,6 +201,17 @@ const writeAuth = (name: string, contents: string, at: string) =>
     yield* fs.utimes(file, Date.parse(at) / 1000, Date.parse(at) / 1000);
   });
 
+const readTombstoneFile = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const { baseDir } = yield* ServerConfig.ServerConfig;
+  const { tombstonesPath } = cliproxyDirectories(baseDir, path);
+  if (!(yield* fs.exists(tombstonesPath))) return null;
+  // Inspected as raw wire JSON so the test sees exactly what is on disk.
+  // @effect-diagnostics-next-line preferSchemaOverJson:off
+  return JSON.parse(yield* fs.readFileString(tombstonesPath)) as Record<string, string>;
+});
+
 const readAuths = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -168,13 +253,58 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxySync", (it)
         const aOld = { ...bundle.entries.find((entry) => entry.id === "a.json")!, updatedAt: T0 };
         const bNew = { ...bundle.entries.find((entry) => entry.id === "b.json")!, updatedAt: T2 };
         const result = yield* service.applyPush([aOld, bNew]);
-        assert.deepEqual(result, { written: ["b.json"], skipped: ["a.json"] });
+        assert.deepEqual(result, { written: ["b.json"], skipped: ["a.json"], deleted: [] });
 
         const rejected = yield* service
           .applyPush([{ id: "c.json", updatedAt: T2, ciphertext: "AAAA" }])
           .pipe(Effect.exit);
         assert.isTrue(Exit.isFailure(rejected));
         assert.deepEqual(Object.keys(yield* readAuths).sort(), ["a.json", "b.json"]);
+      }).pipe(Effect.provide(primary));
+    }),
+  );
+
+  it.effect("primary records, exports, and applies tombstones; a newer file wins over one", () =>
+    Effect.gen(function* () {
+      const primary = makeNode({
+        id: "primary-tombstones",
+        config: { cliproxy: { sync: { role: "primary" } } },
+        env: { Q1CODE_CLIPROXY_SYNC_KEY: KEY },
+        transport: noTransport,
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* CliProxySyncService;
+        yield* writeAuth("old.json", '{"v":"old"}', T0);
+        yield* writeAuth("refreshed.json", '{"v":"new"}', T3);
+        yield* writeAuth("keep.json", '{"v":"keep"}', T1);
+
+        // A deletion made here (the sidecar already removed the file).
+        yield* service.recordTombstone("gone.json");
+        const bundle = yield* service.exportBundle;
+        assert.equal(bundle.version, 2);
+        assert.deepEqual(
+          bundle.tombstones?.map((tombstone) => tombstone.id),
+          ["gone.json"],
+        );
+        const file = yield* readTombstoneFile;
+        assert.deepEqual(Object.keys(file ?? {}), ["gone.json"]);
+
+        // A replica push: bury `old.json` (older than the tombstone), fail to bury
+        // `refreshed.json` (newer than its tombstone), bring `keep.json` along.
+        const keep = bundle.entries.find((entry) => entry.id === "keep.json")!;
+        const result = yield* service.applyPush(
+          [keep],
+          [
+            { id: "old.json", deletedAt: T1 },
+            { id: "refreshed.json", deletedAt: T2 },
+          ],
+        );
+        assert.deepEqual(result, { written: [], skipped: ["keep.json"], deleted: ["old.json"] });
+        assert.deepEqual(Object.keys(yield* readAuths).sort(), ["keep.json", "refreshed.json"]);
+        assert.deepEqual(Object.keys((yield* readTombstoneFile) ?? {}).sort(), [
+          "gone.json",
+          "old.json",
+        ]);
       }).pipe(Effect.provide(primary));
     }),
   );
@@ -228,11 +358,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxySync", (it)
                 Effect.flatMap((primary) => primary.exportBundle),
                 Effect.orDie,
               ),
-            push: ({ entries }) =>
+            push: ({ entries, tombstones }) =>
               Deferred.await(primaryReady).pipe(
                 Effect.flatMap((primary) => {
                   pushes.push(entries);
-                  return primary.applyPush(entries);
+                  return primary.applyPush(entries, tombstones);
                 }),
                 Effect.orDie,
               ),
@@ -261,12 +391,17 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxySync", (it)
           const primaryService = yield* CliProxySyncService;
           yield* writeAuth("shared.json", '{"v":"primary-old"}', T0);
           yield* writeAuth("primary-only.json", '{"v":"p"}', T1);
+          yield* writeAuth("deleted-on-replica.json", '{"v":"d"}', T0);
+          // Deleted on the primary; the replica still holds an older copy.
+          yield* primaryService.recordTombstone("deleted-on-primary.json");
           yield* Deferred.succeed(primaryReady, primaryService);
 
           yield* Effect.gen(function* () {
             const replicaService = yield* CliProxySyncService;
             yield* writeAuth("shared.json", '{"v":"replica-new"}', T2);
             yield* writeAuth("replica-only.json", '{"v":"r"}', T1);
+            yield* writeAuth("deleted-on-primary.json", '{"v":"stale"}', T0);
+            yield* replicaService.recordTombstone("deleted-on-replica.json");
 
             // Each tick runs one cycle; subscribe to `changes` before offering the
             // tick so the completion cannot be missed, then await it.
@@ -285,6 +420,12 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxySync", (it)
             const replicaFiles = yield* readAuths;
             assert.equal(replicaFiles["primary-only.json"], '{"v":"p"}');
             assert.equal(replicaFiles["shared.json"], '{"v":"replica-new"}');
+            assert.isUndefined(replicaFiles["deleted-on-primary.json"]);
+            assert.isUndefined(replicaFiles["deleted-on-replica.json"]);
+            assert.deepEqual(Object.keys((yield* readTombstoneFile) ?? {}).sort(), [
+              "deleted-on-primary.json",
+              "deleted-on-replica.json",
+            ]);
             assert.equal(pushes.length, 1);
             assert.deepEqual(pushes[0]!.map((entry) => entry.id).sort(), [
               "replica-only.json",
@@ -303,6 +444,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("CliProxySync", (it)
           assert.equal(primaryFiles["shared.json"], '{"v":"replica-new"}');
           assert.equal(primaryFiles["replica-only.json"], '{"v":"r"}');
           assert.equal(primaryFiles["primary-only.json"], '{"v":"p"}');
+          assert.isUndefined(primaryFiles["deleted-on-replica.json"]);
+          assert.deepEqual(Object.keys((yield* readTombstoneFile) ?? {}).sort(), [
+            "deleted-on-primary.json",
+            "deleted-on-replica.json",
+          ]);
         }).pipe(Effect.provide(primary));
       }),
   );
