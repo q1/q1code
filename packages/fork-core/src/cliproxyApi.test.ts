@@ -36,6 +36,7 @@ describe("cliproxy api contract", () => {
         "loginCallback",
         "loginStatus",
         "patchAccount",
+        "restart",
         "setRouting",
         "startLogin",
         "status",
