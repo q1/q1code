@@ -59,7 +59,7 @@ import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
-import { CliProxyAccountsCards } from "../../fork/cliproxy/CliProxyAccountsCard"; // fork: cliproxy
+import { CliProxySettingsRow } from "../../fork/cliproxy/CliProxySettingsRow"; // fork: cliproxy
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -139,7 +139,7 @@ function LocalSettingsRouteScreen() {
         </SettingsSection>
 
         <GeneralSettingsSection />
-        <CliProxyAccountsCards /* fork: cliproxy */ />
+        <CliProxySettingsRow /* fork: cliproxy */ />
 
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
@@ -526,7 +526,7 @@ function ConfiguredSettingsRouteScreen() {
         </SettingsSection>
 
         <GeneralSettingsSection />
-        <CliProxyAccountsCards /* fork: cliproxy */ />
+        <CliProxySettingsRow /* fork: cliproxy */ />
 
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
