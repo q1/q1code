@@ -15,12 +15,13 @@ import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 
-import { CliProxyRoutingStrategy } from "./config.ts";
+import { CliProxyMode, CliProxyRoutingStrategy } from "./config.ts";
 
 export const CLIPROXY_API_PREFIX = "/api/fork/cliproxy";
 
 export const CLIPROXY_API_PATHS = {
   status: `${CLIPROXY_API_PREFIX}/status`,
+  restart: `${CLIPROXY_API_PREFIX}/restart`,
   accounts: `${CLIPROXY_API_PREFIX}/accounts`,
   accountsLogin: `${CLIPROXY_API_PREFIX}/accounts/login`,
   accountsLoginSession: `${CLIPROXY_API_PREFIX}/accounts/login/:sessionId`,
@@ -49,6 +50,16 @@ export const CliProxyStatus = Schema.Struct({
   role: CliProxyRole,
   lastSyncAt: Schema.optionalKey(IsoTimestamp),
   lastSyncError: Schema.optionalKey(Schema.String),
+  /** Absent from servers older than this field; treat as `sidecar`. */
+  mode: Schema.optionalKey(CliProxyMode),
+  /** The proxy origin provider CLIs are pointed at while `ready`. */
+  baseUrl: Schema.optionalKey(Schema.String),
+  /** Why the proxy is `failed` or keeps restarting; never contains a secret. */
+  lastError: Schema.optionalKey(Schema.String),
+  /** Supervisor restarts (sidecar) or reconnects (external) since the flag turned on. */
+  restarts: Schema.optionalKey(Schema.Number),
+  /** When the current `state` was entered. */
+  since: Schema.optionalKey(IsoTimestamp),
 });
 export type CliProxyStatus = typeof CliProxyStatus.Type;
 
@@ -321,6 +332,13 @@ export class CliProxyHttpApiGroup extends HttpApiGroup.make("cliproxy")
       headers: OptionalBearerHeaders,
       success: CliProxyStatus,
       error: ScopeErrors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("restart", CLIPROXY_API_PATHS.restart, {
+      headers: OptionalBearerHeaders,
+      success: CliProxyStatus,
+      error: [...ScopeErrors, CliProxyUnavailableError],
     }),
   )
   .add(
