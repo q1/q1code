@@ -1,6 +1,6 @@
 /**
- * The accounts client bound to the primary environment's prepared connection.
- * Every call resolves to a plain result so the section never `try`s: typed
+ * The Prism client bound to the primary environment's prepared connection.
+ * Every call resolves to a plain result so the panel never `try`s: typed
  * failures land in `error`, and only a defect rejects the promise.
  */
 import {
@@ -15,9 +15,11 @@ import {
   getCliProxyLoginStatus,
   getCliProxyRouting,
   getCliProxyStatus,
+  getCliProxySyncStatus,
   getCliProxyUsage,
   listCliProxyAccounts,
   patchCliProxyAccount,
+  restartCliProxy,
   setCliProxyRouting,
   startCliProxyLogin,
 } from "@t3tools/client-runtime/fork";
@@ -62,6 +64,9 @@ const bindCalls = (prepared: CliProxyClientInput["prepared"]) => {
 
   return {
     status: () => run(getCliProxyStatus),
+    /** Answers with the status right after; poll `status` until `ready` or `failed`. */
+    restart: () => run(restartCliProxy),
+    syncStatus: () => run(getCliProxySyncStatus),
     listAccounts: () => run(listCliProxyAccounts),
     startLogin: (provider: CliProxyLoginProvider) =>
       run((input) => startCliProxyLogin({ ...input, provider })),
