@@ -37,6 +37,7 @@ describe("prism api contract", () => {
         "loginStatus",
         "patchAccount",
         "restart",
+        "setUsageSource",
         "setRouting",
         "startLogin",
         "status",

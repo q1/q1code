@@ -22,6 +22,7 @@ export const PRISM_API_PREFIX = "/api/fork/prism";
 export const PRISM_API_PATHS = {
   status: `${PRISM_API_PREFIX}/status`,
   restart: `${PRISM_API_PREFIX}/restart`,
+  usageSource: `${PRISM_API_PREFIX}/usage-source`,
   accounts: `${PRISM_API_PREFIX}/accounts`,
   accountsLogin: `${PRISM_API_PREFIX}/accounts/login`,
   accountsLoginSession: `${PRISM_API_PREFIX}/accounts/login/:sessionId`,
@@ -60,6 +61,8 @@ export const PrismStatus = Schema.Struct({
   restarts: Schema.optionalKey(Schema.Number),
   /** When the current `state` was entered. */
   since: Schema.optionalKey(IsoTimestamp),
+  /** Whether the pooled accounts are published to the Limits view (`prism.usageSource`, default true). */
+  usageSource: Schema.optionalKey(Schema.Boolean),
 });
 export type PrismStatus = typeof PrismStatus.Type;
 
@@ -224,6 +227,10 @@ export const PrismSyncStatus = Schema.Struct({
 });
 export type PrismSyncStatus = typeof PrismSyncStatus.Type;
 
+/** `PUT usage-source` body: whether Prism publishes its pooled accounts to the Limits view. Persisted in `fork.json`. */
+export const PrismUsageSource = Schema.Struct({ enabled: Schema.Boolean });
+export type PrismUsageSource = typeof PrismUsageSource.Type;
+
 export const PrismOk = Schema.Struct({ ok: Schema.Literal(true) });
 export type PrismOk = typeof PrismOk.Type;
 
@@ -339,6 +346,14 @@ export class PrismHttpApiGroup extends HttpApiGroup.make("prism")
       headers: OptionalBearerHeaders,
       success: PrismStatus,
       error: [...ScopeErrors, PrismUnavailableError],
+    }),
+  )
+  .add(
+    HttpApiEndpoint.put("setUsageSource", PRISM_API_PATHS.usageSource, {
+      headers: OptionalBearerHeaders,
+      payload: PrismUsageSource,
+      success: PrismStatus,
+      error: [...ScopeErrors, PrismUnavailableError, PrismConfigError],
     }),
   )
   .add(

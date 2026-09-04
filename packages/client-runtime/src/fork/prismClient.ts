@@ -174,6 +174,14 @@ export const getPrismStatus = (
 ): Effect.Effect<PrismStatus, PrismClientError, HttpClient.HttpClient> =>
   call(input, "GET", "status", (client, headers) => client.prism.status({ headers }));
 
+/** Turn the Limits-view publication of Prism's accounts on or off; answers with the status (`usageSource` reflects the new value). */
+export const setPrismUsageSource = (
+  input: PrismClientInput & { readonly enabled: boolean },
+): Effect.Effect<PrismStatus, PrismClientError, HttpClient.HttpClient> =>
+  call(input, "PUT", "setUsageSource", (client, headers) =>
+    client.prism.setUsageSource({ headers, payload: { enabled: input.enabled } }),
+  );
+
 export const restartPrism = (
   input: PrismClientInput,
 ): Effect.Effect<PrismStatus, PrismClientError, HttpClient.HttpClient> =>
