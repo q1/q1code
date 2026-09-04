@@ -76,12 +76,14 @@ export function PrismAccountsTable({
   state,
   accounts,
   highlightedAccountId,
+  readOnly = false,
   onToggle,
   onWeight,
   onDelete,
 }: {
   readonly state: PrismAccountsState;
   readonly accounts: ReadonlyArray<PrismAccount>;
+  readonly readOnly?: boolean;
   readonly highlightedAccountId: string | null;
   readonly onToggle: (account: PrismAccount, enabled: boolean) => void;
   readonly onWeight: (account: PrismAccount, weight: number) => void;
@@ -115,6 +117,7 @@ export function PrismAccountsTable({
         <TableBody>
           {accounts.map((account) => {
             const pending = isPrismAccountPending(state, account.id);
+            const locked = pending || readOnly;
             const updated = formatRelativeTimeLabel(account.updatedAt);
             const health = prismAccountHealth(account, now);
             return (
@@ -153,7 +156,7 @@ export function PrismAccountsTable({
                   <Switch
                     size="sm"
                     checked={!account.disabled}
-                    disabled={pending}
+                    disabled={locked}
                     onCheckedChange={(checked) => onToggle(account, Boolean(checked))}
                     aria-label={`${account.disabled ? "Enable" : "Disable"} ${describePrismAccount(account)}`}
                   />
@@ -161,7 +164,7 @@ export function PrismAccountsTable({
                 <TableCell>
                   <WeightInput
                     account={account}
-                    disabled={pending}
+                    disabled={locked}
                     onCommit={(weight) => onWeight(account, weight)}
                   />
                 </TableCell>
@@ -178,7 +181,7 @@ export function PrismAccountsTable({
                     size="icon-micro"
                     variant="ghost-muted"
                     aria-label={`Remove ${describePrismAccount(account)}`}
-                    disabled={pending}
+                    disabled={locked}
                     onClick={() => onDelete(account)}
                   >
                     <Trash2Icon className="size-3" />

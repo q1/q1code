@@ -78,21 +78,22 @@ const makeSidecar = (
 
 /** Sync that is not configured; `tombstones` collects what `DELETE accounts/:id` records. */
 const tombstones: Array<string> = [];
-const syncLayer = Layer.succeed(
-  PrismSyncService,
-  PrismSyncService.of({
-    status: Effect.succeed({ role: "standalone" as const }),
-    changes: Stream.empty,
-    exportBundle: Effect.fail(new PrismSyncNotConfigured({ message: "no sync" })),
-    applyPush: (_entries: ReadonlyArray<PrismSyncEntry>) =>
-      Effect.fail(new PrismSyncNotConfigured({ message: "no sync" })),
-    syncNow: Effect.void,
-    recordTombstone: (id) =>
-      Effect.sync(() => {
-        tombstones.push(id);
-      }),
-  }),
-);
+const makeSyncLayer = (role: "standalone" | "replica" = "standalone") =>
+  Layer.succeed(
+    PrismSyncService,
+    PrismSyncService.of({
+      status: Effect.succeed({ role }),
+      changes: Stream.empty,
+      exportBundle: Effect.fail(new PrismSyncNotConfigured({ message: "no sync" })),
+      applyPush: (_entries: ReadonlyArray<PrismSyncEntry>) =>
+        Effect.fail(new PrismSyncNotConfigured({ message: "no sync" })),
+      syncNow: Effect.void,
+      recordTombstone: (id) =>
+        Effect.sync(() => {
+          tombstones.push(id);
+        }),
+    }),
+  );
 
 /** Flags with an in-memory `fork.json`: `raw` is what `update` would have written. */
 const makeFlags = (prism: boolean, initial: RawForkConfig = {}) => {
@@ -200,13 +201,17 @@ const listing = [
 
 const makeClient = (
   sidecar: ReturnType<typeof makeSidecar>,
-  options: { readonly flag?: boolean; readonly flags?: ReturnType<typeof makeFlags> } = {},
+  options: {
+    readonly role?: "standalone" | "replica";
+    readonly flag?: boolean;
+    readonly flags?: ReturnType<typeof makeFlags>;
+  } = {},
 ) =>
   HttpApiTest.groups(PrismHttpApi, ["prism"]).pipe(
     Effect.provide(
       prismHttpApiLayer.pipe(
         Layer.provide(sidecar.layer),
-        Layer.provide(syncLayer),
+        Layer.provide(makeSyncLayer(options.role)),
         Layer.provide((options.flags ?? makeFlags(options.flag ?? true)).layer),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "q1code-prism-http-" })),
         Layer.provideMerge(authLayer),
@@ -219,6 +224,27 @@ const admin = { headers: { authorization: "Bearer admin" } };
 const read = { headers: { authorization: "Bearer read" } };
 
 it.layer(NodeServices.layer, { excludeTestServices: true })("PrismHttpApi", (it) => {
+  it.effect("replicas reject sign-in and account mutations before calling the engine", () =>
+    Effect.gen(function* () {
+      const sidecar = makeSidecar(READY, () => ({ body: {} }));
+      const client = yield* makeClient(sidecar, { role: "replica" });
+      const login = yield* client.prism
+        .startLogin({ ...admin, payload: { provider: "codex" } })
+        .pipe(Effect.flip);
+      const patch = yield* client.prism
+        .patchAccount({ ...admin, params: { id: "a.json" }, payload: { disabled: true } })
+        .pipe(Effect.flip);
+      const removed = yield* client.prism
+        .deleteAccount({ ...admin, params: { id: "a.json" } })
+        .pipe(Effect.flip);
+      for (const error of [login, patch, removed]) {
+        assert.equal(error._tag, "PrismUnavailableError");
+        if (error._tag === "PrismUnavailableError") assert.equal(error.reason, "replica-read-only");
+      }
+      assert.deepEqual(sidecar.calls, []);
+    }),
+  );
+
   it.effect("status answers without the sidecar and rejects a missing credential", () =>
     Effect.gen(function* () {
       const client = yield* makeClient(makeSidecar(OFF, () => ({ body: {} })));

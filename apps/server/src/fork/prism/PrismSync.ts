@@ -1,27 +1,8 @@
 /**
- * Cross-machine auth-file sync (phase 1: environment to environment over the
- * tailnet). One environment is the primary; replicas pull its `auths/` on a
- * timer, write files that are newer than their own, then push back any local
- * file that is newer than the primary's copy (refreshed tokens). Last writer
- * wins by file mtime; equal stamps are skipped.
- *
- * Deletions travel as tombstones (`<baseDir>/prism/tombstones.json`,
- * `{ "<auth file>": "<deletedAt>" }`). `DELETE accounts/:id` records one; the
- * primary exports its set, replicas merge it with their own, remove local files
- * the tombstones cover, and push their own tombstones back. A file stamped
- * strictly later than a tombstone is a re-creation and wins; the tombstone is
- * dropped. Tombstones expire after 30 days.
- *
- * Every entry crosses the wire encrypted with a key both sides derive from a
- * shared secret (`PrismSyncCrypto.ts`). The replica authenticates to the
- * primary with an admin-scoped bearer token. Both secrets are read from the
- * server secret store first (the names in `fork.json`, defaulting to
- * `prism-sync-token` / `prism-sync-key`; put them there with
- * `q1code fork secret set <name>`), then from the environment
- * (`Q1CODE_PRISM_SYNC_TOKEN`, `Q1CODE_PRISM_SYNC_KEY`).
- *
- * The transport and the ticker are services so tests wire two sync services
- * together in memory and drive the loop without a clock.
+ * The primary owns account enrollment and token rotation. Version 3 exports a
+ * complete, encrypted serving snapshot without refresh tokens. Replicas never
+ * push credentials back or trust local mtimes over the primary. A failed fetch
+ * or decrypt leaves the last serving snapshot intact.
  */
 import {
   PRISM_API_PATHS,
@@ -66,6 +47,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ForkFlags from "../ForkFlags.ts";
 import { prismAuthsDir, prismDirectories } from "./PrismConfig.ts";
+import { servingCredential } from "./PrismServingCredentials.ts";
 import {
   decryptSyncEntry,
   deriveSyncKey,
@@ -242,13 +224,6 @@ const TombstoneFile = Schema.fromJsonString(Schema.Record(Schema.String, Schema.
 const decodeTombstoneFile = Schema.decodeUnknownExit(TombstoneFile);
 const encodeTombstoneFile = Schema.encodeSync(TombstoneFile);
 
-const sameTombstones = (left: ReadonlyArray<SyncTombstone>, right: ReadonlyArray<SyncTombstone>) =>
-  left.length === right.length &&
-  left.every((tombstone, index) => {
-    const other = right[index];
-    return other?.id === tombstone.id && other.deletedAt === tombstone.deletedAt;
-  });
-
 const trimOrigin = (url: string) => url.replace(/\/+$/, "");
 
 const ioError = (message: string) => (cause: unknown) =>
@@ -359,6 +334,7 @@ const make = Effect.gen(function* () {
     currentAuthsDir.pipe(
       Effect.flatMap((authsDir) => fs.readFile(path.join(authsDir, stamp.id))),
       Effect.mapError(ioError(`read ${stamp.id}`)),
+      Effect.flatMap(servingCredential),
       Effect.flatMap((bytes) => encryptSyncEntry(key, bytes)),
       Effect.mapError((error) =>
         error._tag === "PrismSyncCryptoError"
@@ -428,11 +404,6 @@ const make = Effect.gen(function* () {
       yield* fs.rename(temp, tombstonesPath);
     }).pipe(Effect.mapError(ioError("write tombstones")));
 
-  const writeTombstonesIfChanged = (
-    previous: ReadonlyArray<SyncTombstone>,
-    next: ReadonlyArray<SyncTombstone>,
-  ) => (sameTombstones(previous, next) ? Effect.void : writeTombstones(next));
-
   const recordTombstone = (id: string) =>
     Effect.gen(function* () {
       const known = yield* readTombstones;
@@ -465,7 +436,7 @@ const make = Effect.gen(function* () {
     const tombstones = yield* readTombstones;
     const primaryEnvironmentId = yield* identity.getEnvironmentId;
     return {
-      version: 2,
+      version: 3,
       generatedAt: yield* nowIso,
       primaryEnvironmentId,
       entries,
@@ -479,29 +450,14 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const resolved = yield* requireRole("primary");
-      const decrypted = yield* decryptAll(resolved.key, entries);
-      const local = yield* listLocal;
-      const known = yield* readTombstones;
-      const plan = planSyncMerge(
-        { files: local, tombstones: known },
-        { files: entries, tombstones },
-      );
-      for (const id of plan.deleteLocal) {
-        yield* removeEntry(id);
+      void resolved;
+      if (entries.length > 0 || tombstones.length > 0) {
+        return yield* new PrismSyncNotConfigured({
+          message:
+            "The primary owns pooled accounts. Replica credential pushes are no longer accepted.",
+        });
       }
-      const pull = new Set(plan.pull);
-      const written: Array<string> = [];
-      const skipped: Array<string> = [];
-      for (const { entry, bytes } of decrypted) {
-        if (pull.has(entry.id)) {
-          yield* writeEntry(entry.id, bytes, entry.updatedAt);
-          written.push(entry.id);
-        } else {
-          skipped.push(entry.id);
-        }
-      }
-      yield* writeTombstonesIfChanged(known, plan.tombstones);
-      return { written, skipped, deleted: plan.deleteLocal } satisfies PrismSyncPushResult;
+      return { written: [], skipped: [], deleted: [] } satisfies PrismSyncPushResult;
     });
 
   const status = Effect.gen(function* () {
@@ -532,46 +488,45 @@ const make = Effect.gen(function* () {
       }
       const target = { primaryUrl: resolved.primaryUrl, token: resolved.token };
       const bundle = yield* transport.fetchExport(target);
+      if (bundle.version !== 3) {
+        return yield* new PrismSyncNotConfigured({
+          message:
+            "Upgrade the primary: replicas require version 3 serving snapshots with primary-owned refresh.",
+        });
+      }
+      const ids = new Set(bundle.entries.map((entry) => entry.id));
+      if (ids.size !== bundle.entries.length) {
+        return yield* new PrismSyncFailedError({
+          reason: "io",
+          message: "Duplicate account in sync snapshot.",
+        });
+      }
+      // Validate the whole snapshot before any deletion or write. Strip again
+      // defensively so even a misconfigured primary cannot give a replica refresh ownership.
+      const decrypted = yield* decryptAll(resolved.key, bundle.entries);
+      const pulled = yield* Effect.forEach(decrypted, ({ entry, bytes }) =>
+        servingCredential(bytes).pipe(Effect.map((bytes) => ({ entry, bytes }))),
+      );
       const local = yield* listLocal;
-      const known = yield* readTombstones;
-      const plan = planSyncMerge(
-        { files: local, tombstones: known },
-        { files: bundle.entries, tombstones: bundle.tombstones ?? [] },
-      );
-      for (const id of plan.deleteLocal) {
-        yield* removeEntry(id);
-      }
-      const remoteById = new Map(bundle.entries.map((entry) => [entry.id, entry]));
-      const pulled = yield* decryptAll(
-        resolved.key,
-        plan.pull.flatMap((id) => {
-          const entry = remoteById.get(id);
-          return entry === undefined ? [] : [entry];
-        }),
-      );
+      const authsDir = yield* currentAuthsDir;
       for (const { entry, bytes } of pulled) {
-        yield* writeEntry(entry.id, bytes, entry.updatedAt);
+        const existing = yield* fs.readFile(path.join(authsDir, entry.id)).pipe(
+          Effect.catch((error) =>
+            error.reason._tag === "NotFound" ? Effect.succeed(undefined) : Effect.fail(error),
+          ),
+          Effect.mapError(ioError("read serving credential")),
+        );
+        if (existing === undefined || !Buffer.from(existing).equals(Buffer.from(bytes))) {
+          yield* writeEntry(entry.id, bytes, entry.updatedAt);
+        }
       }
-      const localById = new Map(local.map((stamp) => [stamp.id, stamp]));
-      const pushes = yield* Effect.forEach(
-        plan.push.flatMap((id) => {
-          const stamp = localById.get(id);
-          return stamp === undefined ? [] : [stamp];
-        }),
-        (stamp) => readEntry(resolved.key, stamp),
-      );
-      // The primary learns a replica-side deletion only through a push, so a
-      // cycle with nothing to write still pushes when a tombstone covers a
-      // primary file.
-      if (pushes.length > 0 || plan.deleteRemote.length > 0) {
-        yield* transport.push({ ...target, entries: pushes, tombstones: plan.tombstones });
-      }
-      yield* writeTombstonesIfChanged(known, plan.tombstones);
+      const removed = local.filter((entry) => !ids.has(entry.id));
+      for (const entry of removed) yield* removeEntry(entry.id);
+      yield* writeTombstones(bundle.tombstones ?? []);
       yield* Ref.set(lastSyncRef, { at: yield* nowIso });
       yield* Effect.logInfo("prism sync: cycle complete", {
         pulled: pulled.length,
-        pushed: pushes.length,
-        deleted: plan.deleteLocal.length,
+        deleted: removed.length,
       });
     }).pipe(
       Effect.tapError((error) =>
