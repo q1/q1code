@@ -70,12 +70,12 @@ const makeGateway = (
   };
 };
 
-/** Every management call answers: three accounts, one disabled, round-robin. */
+/** Local management calls work even when the remote release check fails. */
 const healthyGateway = () =>
   makeGateway((path) => {
     switch (path) {
       case "/latest-version":
-        return { body: { version: "7.2.147" } };
+        return { status: 502, body: { error: "release service unavailable" } };
       case "/auth-files":
         return {
           body: {
@@ -149,7 +149,7 @@ const storeSecret = (baseDir: string, name: string, value = MANAGEMENT_SECRET) =
 const FLAG_ON = '{"flags":{"prism":true}}';
 
 describe("q1code prism status", () => {
-  it.effect("reports a ready sidecar with exactly the documented keys and exits 0", () =>
+  it.effect("reports a ready sidecar when the release service is unavailable", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       writeForkConfig(baseDir, FLAG_ON);
@@ -178,9 +178,8 @@ describe("q1code prism status", () => {
       assert.deepEqual(
         gateway.calls.map((call) => call.url),
         [
-          "http://127.0.0.1:8317/v0/management/latest-version",
-          "http://127.0.0.1:8317/v0/management/auth-files",
           "http://127.0.0.1:8317/v0/management/routing/strategy",
+          "http://127.0.0.1:8317/v0/management/auth-files",
         ],
       );
       assert.isTrue(
@@ -271,7 +270,7 @@ describe("q1code prism status", () => {
       assert.isTrue(Exit.isFailure(exit));
       const report = decodeReport(output);
       assert.isFalse(report.reachable);
-      assert.include(report.error ?? "", "GET /latest-version failed");
+      assert.include(report.error ?? "", "GET /routing/strategy failed");
       assert.include(report.error ?? "", "ECONNREFUSED");
       assert.notInclude(output, MANAGEMENT_SECRET);
       assert.equal(gateway.calls.length, 1);
@@ -295,7 +294,7 @@ describe("q1code prism status", () => {
         accounts: 0,
         disabled: 0,
         strategy: null,
-        error: "HTTP 401 from GET /latest-version; check the management secret",
+        error: "HTTP 401 from GET /routing/strategy; check the management secret",
       });
       assert.equal(gateway.calls.length, 1);
     }),
@@ -307,7 +306,9 @@ describe("q1code prism status", () => {
       writeForkConfig(baseDir, FLAG_ON);
       yield* storeSecret(baseDir, "prism-management-secret");
       const gateway = makeGateway((path) =>
-        path === "/latest-version" ? { body: {} } : { status: 500, body: { error: "boom" } },
+        path === "/routing/strategy"
+          ? { body: { strategy: "round-robin" } }
+          : { status: 500, body: { error: "boom" } },
       );
       const { exit, output } = yield* capture(
         runCli(["prism", "status", "--json", "--base-dir", baseDir], { gateway }),
@@ -338,7 +339,7 @@ describe("q1code prism status", () => {
       assert.isTrue(Exit.isFailure(exit));
       const report = decodeReport(output);
       assert.isFalse(report.reachable);
-      assert.include(report.error ?? "", "GET /latest-version timed out");
+      assert.include(report.error ?? "", "GET /routing/strategy timed out");
     }),
   );
 
@@ -355,7 +356,7 @@ describe("q1code prism status", () => {
         );
         assert.isTrue(Exit.isSuccess(sidecarRun.exit));
         assert.equal(decodeReport(sidecarRun.output).baseUrl, "http://127.0.0.1:9000");
-        assert.equal(sidecar.calls[0]?.url, "http://127.0.0.1:9000/v0/management/latest-version");
+        assert.equal(sidecar.calls[0]?.url, "http://127.0.0.1:9000/v0/management/routing/strategy");
 
         const externalDir = makeBaseDir();
         writeForkConfig(
@@ -373,7 +374,7 @@ describe("q1code prism status", () => {
         assert.equal(report.baseUrl, "https://proxy.example.test:9443");
         assert.equal(
           external.calls[0]?.url,
-          "https://proxy.example.test:9443/v0/management/latest-version",
+          "https://proxy.example.test:9443/v0/management/routing/strategy",
         );
         assert.equal(external.calls[0]?.authorization, "Bearer external-secret");
       }),

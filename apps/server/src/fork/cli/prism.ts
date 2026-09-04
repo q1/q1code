@@ -19,7 +19,7 @@ import {
   PrismMode,
 } from "@q1code/core/config";
 import { envVarForFlag, resolveForkFlags } from "@q1code/core/flags";
-import { PRISM_DEFAULT_PORT } from "@q1code/core/prism";
+import { PRISM_DEFAULT_PORT, PRISM_MANAGEMENT_PROBE_PATH } from "@q1code/core/prism";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -269,7 +269,7 @@ const toAccountReport = (
 /** Pins the success type of `collectStatus` so `error` reads as optional everywhere. */
 const asReport = (report: PrismStatusReport): PrismStatusReport => report;
 
-/** The whole `status` picture: probe, then accounts, then strategy; the first failure ends the walk. */
+/** Probes local routing state, then counts accounts; the first failure ends the walk. */
 const collectStatus = (flags: CliAuthLocationFlags) =>
   Effect.gen(function* () {
     const gateway = yield* resolveGateway(flags);
@@ -284,7 +284,7 @@ const collectStatus = (flags: CliAuthLocationFlags) =>
     if (gateway._tag === "unavailable") return asReport({ ...base, error: gateway.error });
     const httpLayer = yield* PrismCliHttp;
     return yield* Effect.gen(function* () {
-      const probe = yield* managementGet(gateway, "/latest-version", Schema.Unknown);
+      const probe = yield* managementGet(gateway, PRISM_MANAGEMENT_PROBE_PATH, RoutingResponse);
       if (Result.isFailure(probe)) return asReport({ ...base, error: probe.failure });
       const reachable = asReport({ ...base, reachable: true });
       const files = yield* managementGet(gateway, "/auth-files", AuthFilesResponse);
@@ -295,10 +295,7 @@ const collectStatus = (flags: CliAuthLocationFlags) =>
         accounts: accounts.length,
         disabled: accounts.filter((account) => account.disabled).length,
       });
-      const routing = yield* managementGet(gateway, "/routing/strategy", RoutingResponse);
-      return Result.isFailure(routing)
-        ? asReport({ ...counted, error: routing.failure })
-        : asReport({ ...counted, strategy: routing.success.strategy });
+      return asReport({ ...counted, strategy: probe.success.strategy });
     }).pipe(Effect.provide(httpLayer));
   });
 
