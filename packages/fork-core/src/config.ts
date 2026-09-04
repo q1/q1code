@@ -80,6 +80,8 @@ export const PrismConfig = Schema.Struct({
   /** Default `sidecar`. `external` requires the `external` section. */
   mode: Schema.optionalKey(PrismMode),
   external: Schema.optionalKey(PrismExternalConfig),
+  /** Publish the pooled accounts to the Limits view as a usage-limit source (upstream's CLI proxy hub kind). Default true. */
+  usageSource: Schema.optionalKey(Schema.Boolean),
   /** Loopback port the sidecar listens on. Default 8317. Ignored in external mode. */
   port: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
   routingStrategy: Schema.optionalKey(PrismRoutingStrategy),
