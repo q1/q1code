@@ -128,6 +128,59 @@ export function describePrismStatus(
   return lines;
 }
 
+// Usage source
+
+/** `usageSource` arrived after the first release; a status without it means the default, on. */
+export function isPrismUsageSourceOn(status: Pick<PrismStatus, "usageSource"> | null): boolean {
+  return status?.usageSource ?? true;
+}
+
+export const PRISM_USAGE_SOURCE_LABEL = "Show pooled accounts on Usage → Limits";
+
+export interface PrismUsageSourceState {
+  /** What the switch shows: the optimistic value while a save is in flight, else the server's. `null` until the status arrived. */
+  readonly enabled: boolean | null;
+  /** The server's value to fall back to while a save is in flight; `null` when idle. */
+  readonly rollback: boolean | null;
+  /** Why the last save failed; cleared on the next attempt. */
+  readonly error: string | null;
+}
+
+export const INITIAL_USAGE_SOURCE_STATE: PrismUsageSourceState = {
+  enabled: null,
+  rollback: null,
+  error: null,
+};
+
+export type PrismUsageSourceEvent =
+  /** Any status load; ignored while a save is in flight so a stale poll cannot undo the optimistic value. */
+  | { readonly type: "status"; readonly status: PrismStatus }
+  | { readonly type: "toggle"; readonly enabled: boolean }
+  | { readonly type: "saved"; readonly status: PrismStatus }
+  | { readonly type: "saveFailed"; readonly error: string };
+
+export function reducePrismUsageSource(
+  state: PrismUsageSourceState,
+  event: PrismUsageSourceEvent,
+): PrismUsageSourceState {
+  switch (event.type) {
+    case "status":
+      if (state.rollback !== null) return state;
+      return { ...state, enabled: isPrismUsageSourceOn(event.status) };
+    case "toggle": {
+      if (state.enabled === null || state.rollback !== null || state.enabled === event.enabled) {
+        return state;
+      }
+      return { enabled: event.enabled, rollback: state.enabled, error: null };
+    }
+    case "saved":
+      return { enabled: isPrismUsageSourceOn(event.status), rollback: null, error: null };
+    case "saveFailed":
+      if (state.rollback === null) return state;
+      return { enabled: state.rollback, rollback: null, error: event.error };
+  }
+}
+
 // Errors
 
 /** What a call resolved to when it did not succeed; `UnknownError` is a defect the runtime rejected with. */
