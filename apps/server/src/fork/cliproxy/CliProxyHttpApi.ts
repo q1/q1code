@@ -188,29 +188,27 @@ export const cliProxyHttpApiLayer = HttpApiBuilder.group(
       options?: CliProxy.CliProxyManagementRequestOptions,
     ): Effect.Effect<S["Type"], ProxyError> =>
       proxy.management.request(requestPath, options).pipe(
-        Effect.catch(
-          (error): Effect.Effect<never, ProxyError> =>
-            error.reason === "not-ready"
-              ? unavailable("sidecar-not-ready")
-              : Effect.fail(new CliProxyUpstreamError({ status: 0, message: error.message })),
+        Effect.catch((error): Effect.Effect<never, ProxyError> =>
+          error.reason === "not-ready"
+            ? unavailable("sidecar-not-ready")
+            : Effect.fail(new CliProxyUpstreamError({ status: 0, message: error.message })),
         ),
-        Effect.flatMap(
-          (response): Effect.Effect<S["Type"], ProxyError> =>
-            response.status >= 400
-              ? upstreamMessage(response).pipe(
-                  Effect.flatMap((message) =>
-                    Effect.fail(new CliProxyUpstreamError({ status: response.status, message })),
-                  ),
-                )
-              : HttpClientResponse.schemaBodyJson(schema)(response).pipe(
-                  Effect.mapError(
-                    () =>
-                      new CliProxyUpstreamError({
-                        status: response.status,
-                        message: `unexpected response from ${requestPath}`,
-                      }),
-                  ),
+        Effect.flatMap((response): Effect.Effect<S["Type"], ProxyError> =>
+          response.status >= 400
+            ? upstreamMessage(response).pipe(
+                Effect.flatMap((message) =>
+                  Effect.fail(new CliProxyUpstreamError({ status: response.status, message })),
                 ),
+              )
+            : HttpClientResponse.schemaBodyJson(schema)(response).pipe(
+                Effect.mapError(
+                  () =>
+                    new CliProxyUpstreamError({
+                      status: response.status,
+                      message: `unexpected response from ${requestPath}`,
+                    }),
+                ),
+              ),
         ),
       );
 
@@ -511,23 +509,22 @@ export const cliProxyHttpApiLayer = HttpApiBuilder.group(
           args.endpoint.name,
           requireReady.pipe(
             Effect.andThen(call(UsageResponse, "/api-key-usage")),
-            Effect.map(
-              (usage): CliProxyUsage =>
-                Object.fromEntries(
-                  Object.entries(usage).map(([provider, keys]) => [
-                    provider,
-                    Object.fromEntries(
-                      Object.entries(keys).map(([key, entry]) => [
-                        key,
-                        {
-                          success: entry.success,
-                          failed: entry.failed,
-                          recentRequests: entry.recent_requests ?? [],
-                        },
-                      ]),
-                    ),
-                  ]),
-                ),
+            Effect.map((usage): CliProxyUsage =>
+              Object.fromEntries(
+                Object.entries(usage).map(([provider, keys]) => [
+                  provider,
+                  Object.fromEntries(
+                    Object.entries(keys).map(([key, entry]) => [
+                      key,
+                      {
+                        success: entry.success,
+                        failed: entry.failed,
+                        recentRequests: entry.recent_requests ?? [],
+                      },
+                    ]),
+                  ),
+                ]),
+              ),
             ),
           ),
         ),
