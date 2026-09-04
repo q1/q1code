@@ -1,5 +1,5 @@
 {
-  "version": "7.2.147",
+  "version": "7.2.151",
   "repository": "router-for-me/CLIProxyAPI",
   "platforms": {
     "darwin-arm64": "darwin_aarch64",
