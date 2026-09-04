@@ -21,6 +21,7 @@ import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { themeCommand } from "./cli/theme.ts";
 import { triageCommand } from "./cli/triage.ts";
 import { forkCommand } from "./fork/cli/forkCommand.ts"; // fork: base
+import { prismCommand } from "./fork/cli/prism.ts"; // fork: prism
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -65,6 +66,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       triageCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
       forkCommand, // fork: base
+      prismCommand, // fork: prism
     ]),
   );
 
