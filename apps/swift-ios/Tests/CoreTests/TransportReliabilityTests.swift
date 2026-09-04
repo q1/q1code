@@ -59,6 +59,35 @@ final class TransportReliabilityTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "Accept-Encoding"), "gzip")
     }
 
+    func testPrismUsesEnvironmentAuthenticationAndDecodesAdditiveAccountHealth() async throws {
+        let environment = Environment(
+            id: "environment-prism", label: "PC",
+            httpBaseURL: URL(string: "https://pc.example")!,
+            webSocketBaseURL: URL(string: "wss://pc.example")!
+        )
+        let credentials = InMemoryCredentialStore(credentials: [
+            environment.id: EnvironmentCredential(accessToken: "test-environment-token"),
+        ])
+        let transport = RecordingHTTPTransport { request in
+            let body = #"{"accounts":[{"id":"claude.json","provider":"anthropic","label":"Claude","disabled":false,"lifecycle":{"requiresLogin":true,"expiresAt":"2026-09-05T00:00:00Z"}},{"id":"old.json","provider":"codex","label":"Older gateway","disabled":false}]}"#
+            return (Data(body.utf8), transportResponse(request))
+        }
+        let api = EnvironmentAPI(transport: transport, credentials: credentials)
+        let response = try await api.prism(
+            PrismRequest("/accounts/claude.json", method: "PATCH", body: ["disabled": .bool(true)]),
+            environment: environment
+        )
+        XCTAssertEqual(response.accounts?.first?.lifecycle?.requiresLogin, true)
+        XCTAssertNil(response.accounts?.last?.lifecycle)
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.url?.absoluteString, "https://pc.example/api/fork/prism/accounts/claude.json")
+        XCTAssertEqual(request.httpMethod, "PATCH")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-environment-token")
+        let body = try JSONDecoder().decode([String: Bool].self, from: XCTUnwrap(request.httpBody))
+        XCTAssertEqual(body, ["disabled": true])
+    }
+
     func testShellSnapshotAppliesBoundedStartupTimeout() async throws {
         let environment = Environment(
             id: "environment-1",

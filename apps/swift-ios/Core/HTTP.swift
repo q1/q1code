@@ -376,6 +376,21 @@ public actor EnvironmentAPI {
         )
     }
 
+    public func prism(_ input: PrismRequest, environment: Environment) async throws -> PrismResponse {
+        guard input.path.hasPrefix("/"), !input.path.contains(".."),
+              !input.path.contains("?"), !input.path.contains("#") else {
+            throw HTTPError.invalidResponse
+        }
+        let body = try input.body.map { try JSONEncoder().encode($0) }
+        return try await authorized(
+            environment: environment,
+            path: "/api/fork/prism" + input.path,
+            method: input.method,
+            body: body,
+            as: PrismResponse.self
+        )
+    }
+
     private func authorized<Result: Decodable & Sendable>(
         environment: Environment,
         path: String,
