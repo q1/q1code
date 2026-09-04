@@ -44,6 +44,7 @@ import {
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { prismUsageSourceKindLabel } from "../../fork/prism/prismAccountsState"; // fork: prism
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
   ahead: { label: "Ahead of pace: spending faster than the window elapses", icon: TrendingUpIcon },
@@ -401,7 +402,7 @@ type LimitsSource = ReturnType<typeof collectLimitSources>[number];
 
 /** Read-only accounts pooled by a configured usage source. */
 function SourceLimits({ source, now }: { readonly source: LimitsSource; readonly now: number }) {
-  const kind = SOURCE_KIND_LABEL[source.kind];
+  const kind = prismUsageSourceKindLabel(source) ?? SOURCE_KIND_LABEL[source.kind]; // fork: prism
   return (
     <div className="flex flex-col gap-6">
       {source.error ? (

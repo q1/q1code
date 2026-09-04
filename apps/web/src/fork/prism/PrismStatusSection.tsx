@@ -1,6 +1,9 @@
 import type { PrismStatus } from "@q1code/core/prismApi";
+import { FORK_CONFIG_FILENAME } from "@q1code/core/config";
+import { Link } from "@tanstack/react-router";
 
 import { Button } from "~/components/ui/button";
+import { Switch } from "~/components/ui/switch";
 import { SettingsRow, SettingsSection } from "~/components/settings/settingsLayout";
 import { searchableSetting } from "~/components/settings/settingsSearch";
 
@@ -20,6 +23,9 @@ export function PrismStatusSection({
   canRestart,
   restarting,
   onRestart,
+  usageSource,
+  usageSourcePending,
+  onUsageSourceChange,
 }: {
   readonly status: PrismStatus | null;
   /** When `status` arrived; the "for 3m" label counts from here, so it moves with each poll. */
@@ -28,6 +34,10 @@ export function PrismStatusSection({
   readonly canRestart: boolean;
   readonly restarting: boolean;
   readonly onRestart: () => void;
+  /** The Limits-view publication toggle as it should show right now (optimistic while a change is in flight); `null` until known. */
+  readonly usageSource: boolean | null;
+  readonly usageSourcePending: boolean;
+  readonly onUsageSourceChange: (enabled: boolean) => void;
 }) {
   const mode = status === null ? null : resolvePrismMode(status);
   return (
@@ -84,6 +94,27 @@ export function PrismStatusSection({
           }
         />
       ) : null}
+      <SettingsRow
+        {...searchableSetting("prism-usage-source")}
+        title="Show pooled accounts on Usage → Limits"
+        description={
+          <>
+            The accounts in the pool appear on the Limits view labelled Prism, beside the accounts
+            your providers report. Saved as prism.usageSource in {FORK_CONFIG_FILENAME}.{" "}
+            <Link to="/usage" className="text-foreground underline underline-offset-2">
+              Open Usage
+            </Link>
+          </>
+        }
+        control={
+          <Switch
+            checked={usageSource ?? true}
+            disabled={usageSource === null || usageSourcePending}
+            onCheckedChange={(checked) => onUsageSourceChange(Boolean(checked))}
+            aria-label="Show pooled accounts on Usage → Limits"
+          />
+        }
+      />
       <SettingsRow
         {...searchableSetting("prism-restart")}
         description={

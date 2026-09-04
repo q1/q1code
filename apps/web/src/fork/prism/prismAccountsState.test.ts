@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { PrismAccount } from "@q1code/core/prismApi";
+import { UsageLimitSourceId } from "@t3tools/contracts";
 
 import {
   IDLE_LOGIN_FLOW,
@@ -10,17 +11,17 @@ import {
   describePrismMode,
   describePrismRestart,
   describePrismUnavailable,
-  describePrismAccountQuota,
-  flattenPrismUsage,
+  describePrismUsageProvider,
   formatPrismSince,
   formatPrismSyncInterval,
   isPrismAccountPending,
-  labelPrismUsageCredential,
   parsePrismWeight,
   pendingPrismLoginSession,
+  prismUsageSourceKindLabel,
   reducePrismAccounts,
   reducePrismLoginFlow,
   resolvePrismMode,
+  resolvePrismUsageSource,
   summarizePrismStatus,
 } from "./prismAccountsState.ts";
 
@@ -194,44 +195,40 @@ describe("prism label helpers", () => {
     expect(parsePrismWeight("abc", 1)).toBeNull();
   });
 
-  it("never surfaces the API key part of a usage credential", () => {
-    expect(labelPrismUsageCredential("https://api.example.test|sk-secret-123", 0)).toBe(
-      "https://api.example.test",
-    );
-    expect(labelPrismUsageCredential("sk-secret-123", 2)).toBe("API key 3");
-    expect(labelPrismUsageCredential("|sk-secret-123", 0)).toBe("API key 1");
-    const rows = flattenPrismUsage({
-      openai: {
-        "https://api.openai.com|sk-abc": { success: 4, failed: 1 },
-        "sk-only": { success: 0, failed: 2 },
-      },
-    });
-    expect(rows).toEqual([
-      {
-        id: "openai:0",
-        provider: "openai",
-        credential: "https://api.openai.com",
-        success: 4,
-        failed: 1,
-      },
-      { id: "openai:1", provider: "openai", credential: "API key 2", success: 0, failed: 2 },
-    ]);
-    expect(JSON.stringify(rows)).not.toContain("sk-");
+  it("labels only the managed usage source as Prism", () => {
+    expect(prismUsageSourceKindLabel({ id: UsageLimitSourceId.make("prism") })).toBe("Prism");
+    expect(prismUsageSourceKindLabel({ id: UsageLimitSourceId.make("my-hub") })).toBeUndefined();
+  });
+});
+
+describe("prism usage provider row", () => {
+  it("treats a status without the toggle as publishing", () => {
+    expect(resolvePrismUsageSource({})).toBe(true);
+    expect(resolvePrismUsageSource({ usageSource: false })).toBe(false);
   });
 
-  it("describes an account's quota signals only when the sidecar observed some", () => {
-    expect(describePrismAccountQuota(undefined)).toBeUndefined();
-    expect(describePrismAccountQuota({ success: 1, failed: 0 })).toBeUndefined();
+  it("describes the managed source, its origin, and whether it publishes", () => {
+    expect(describePrismUsageProvider(null)).toEqual({
+      description: "Managed by q1code",
+      status: "Checking the proxy…",
+    });
     expect(
-      describePrismAccountQuota({ success: 1, failed: 0, quota: { signals: {} } }),
-    ).toBeUndefined();
+      describePrismUsageProvider({ state: "ready", baseUrl: "http://127.0.0.1:8317" }),
+    ).toEqual({
+      description: "Managed by q1code · http://127.0.0.1:8317",
+      status: "Pooled accounts are shown on Usage → Limits.",
+    });
     expect(
-      describePrismAccountQuota({
-        success: 1,
-        failed: 0,
-        quota: { observedAt: "2026-09-02T00:00:00.000Z", signals: { "5h": "ok", "7d": "low" } },
-      }),
-    ).toBe("Quota 5h: ok, 7d: low");
+      describePrismUsageProvider({
+        state: "ready",
+        baseUrl: "http://127.0.0.1:8317",
+        usageSource: false,
+      }).status,
+    ).toContain("Not shown on Usage → Limits");
+    const starting = describePrismUsageProvider({ state: "starting" });
+    expect(starting.description).toBe("Managed by q1code");
+    expect(starting.status).toContain("Proxy starting");
+    expect(describePrismUsageProvider({ state: "failed" }).status).toContain("Proxy failed");
   });
 });
 
