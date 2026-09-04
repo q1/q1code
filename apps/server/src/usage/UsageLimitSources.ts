@@ -34,6 +34,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as PrismEnvironment from "../fork/prism/PrismEnvironment.ts"; // fork: prism
 import { ServerSettingsService } from "../serverSettings.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
@@ -108,7 +109,7 @@ export const make = Effect.gen(function* () {
       ([, config]) => config.enabled,
     );
     const snapshots = yield* Effect.forEach(
-      entries,
+      PrismEnvironment.withPrismUsageLimitSource(entries), // fork: prism
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
       { concurrency: 4 },
     );
@@ -144,6 +145,7 @@ export const make = Effect.gen(function* () {
     Stream.runForEach(() => refresh),
     Effect.forkScoped,
   );
+  yield* PrismEnvironment.refreshOnPrismUsageSourceChange(refresh); // fork: prism
 
   const interval = settingsService.getSettings.pipe(
     Effect.map(

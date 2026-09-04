@@ -20,7 +20,11 @@ import * as ServerConfig from "../../config.ts";
 import { ForkFlagsService } from "../ForkFlags.ts";
 import { PrismBinary } from "./PrismBinary.ts";
 import { prismDirectories } from "./PrismConfig.ts";
-import { currentPrismEndpoint } from "./PrismEnvironment.ts";
+import {
+  currentPrismEndpoint,
+  prismUsageLimitSource,
+  prismUsageSourceChanges,
+} from "./PrismEnvironment.ts";
 import {
   type PrismChild,
   PrismHealthInterval,
@@ -47,6 +51,7 @@ interface FakeLaunch {
 /** A ForkFlagsService whose `changes` the test drives through `set`. */
 const makeFlags = (initial: boolean, config: ForkConfig = {}) => {
   let current: ForkFlagValues = { ...DEFAULT_FORK_FLAGS, prism: initial };
+  let currentConfig = config;
   let publish: (values: ForkFlagValues) => Effect.Effect<void> = () => Effect.void;
   const layer = Layer.effect(
     ForkFlagsService,
@@ -57,7 +62,7 @@ const makeFlags = (initial: boolean, config: ForkConfig = {}) => {
         current: Effect.sync(() => current),
         reload: Effect.sync(() => current),
         changes: Stream.fromPubSub(pubsub),
-        config: Effect.succeed(config),
+        config: Effect.sync(() => currentConfig),
         update: () => Effect.die("unexpected fork.json update"),
       });
     }),
@@ -67,7 +72,12 @@ const makeFlags = (initial: boolean, config: ForkConfig = {}) => {
       current = { ...current, prism };
       return publish(current);
     });
-  return { layer, set };
+  /** A hand edit of fork.json: the config moves without a flag change, so `changes` stays quiet. */
+  const setConfig = (next: ForkConfig) =>
+    Effect.sync(() => {
+      currentConfig = next;
+    });
+  return { layer, set, setConfig };
 };
 
 const makeHarness = (options: {
@@ -152,7 +162,7 @@ const makeHarness = (options: {
       Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "q1code-prism-service-" })),
     ),
   );
-  return { layer, launches, probeInputs, setFlag: flags.set };
+  return { layer, launches, probeInputs, setFlag: flags.set, setConfig: flags.setConfig };
 };
 
 const isIsoTimestamp = (value: string | undefined) =>
@@ -298,12 +308,22 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismService", (it)
         assert.equal(status.pid, harness.launches[0]?.pid);
         assert.equal(status.baseUrl, "http://127.0.0.1:9123");
         assert.isUndefined(status.lastError);
-        const endpoint = yield* service.endpoint;
-        assert.deepEqual(
-          endpoint,
-          Option.some({ baseUrl: "http://127.0.0.1:9123", apiKey: config.apiKey! }),
-        );
-        assert.deepEqual(currentPrismEndpoint(), Option.getOrUndefined(endpoint));
+        assert.isTrue(status.usageSource);
+        const endpoint = Option.getOrUndefined(yield* service.endpoint);
+        assert.isDefined(endpoint);
+        assert.equal(endpoint.baseUrl, "http://127.0.0.1:9123");
+        assert.equal(endpoint.apiKey, config.apiKey);
+        assert.isTrue(endpoint.usageSource);
+        // The management secret the sidecar was configured with rides along, for the usage-limit source.
+        assert.include(config.text, `\n  secret-key: "${endpoint.managementSecret}"\n`);
+        assert.deepEqual(currentPrismEndpoint(), endpoint);
+        assert.deepEqual(prismUsageLimitSource()?.[1], {
+          kind: "cliproxy",
+          label: "Prism",
+          url: "http://127.0.0.1:9123",
+          managementKey: endpoint.managementSecret,
+          enabled: true,
+        });
         assert.equal(service.codexProxyHomePath, directories.codexHomeDir);
         const codexConfig = yield* fs.readFileString(
           path.join(directories.codexHomeDir, "config.toml"),
@@ -398,6 +418,45 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismService", (it)
     }),
   );
 
+  it.effect("carries the usage-source toggle from fork.json and republishes it on reload", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ flag: true, config: { prism: { usageSource: false } } });
+      yield* Effect.gen(function* () {
+        const service = yield* PrismService;
+        const ready = yield* awaitStatus(service, (s) => s.state === "ready");
+        assert.isFalse(ready.usageSource);
+        assert.isFalse(currentPrismEndpoint()?.usageSource);
+        assert.isUndefined(prismUsageLimitSource());
+
+        const emitted = yield* prismUsageSourceChanges.pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild,
+          Effect.tap(() => Effect.yieldNow),
+        );
+        yield* harness.setConfig({ prism: { usageSource: true } });
+        const status = yield* service.reloadUsageSource;
+        assert.isTrue(status.usageSource);
+        assert.equal(status.state, "ready");
+        assert.isTrue(currentPrismEndpoint()?.usageSource);
+        assert.equal(prismUsageLimitSource()?.[1].url, "http://127.0.0.1:8317");
+        assert.equal(
+          prismUsageLimitSource()?.[1].managementKey,
+          currentPrismEndpoint()?.managementSecret,
+        );
+        const [entry] = yield* Fiber.join(emitted);
+        assert.equal(entry?.[0], "prism");
+        assert.deepEqual(yield* service.status, status);
+
+        // The same proxy, restarted, keeps the toggle it read from the file.
+        const restarted = yield* service.restart;
+        assert.isTrue(restarted.usageSource);
+        assert.isTrue(currentPrismEndpoint()?.usageSource);
+      }).pipe(Effect.provide(harness.layer));
+      assert.isUndefined(prismUsageLimitSource());
+    }),
+  );
+
   it.effect("external mode probes the configured proxy and publishes it without spawning", () =>
     Effect.gen(function* () {
       const harness = makeHarness({
@@ -429,7 +488,12 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismService", (it)
         const endpoint = yield* service.endpoint;
         assert.deepEqual(
           endpoint,
-          Option.some({ baseUrl: EXTERNAL_BASE_URL, apiKey: "client-key" }),
+          Option.some({
+            baseUrl: EXTERNAL_BASE_URL,
+            apiKey: "client-key",
+            managementSecret: "mgmt-secret",
+            usageSource: true,
+          }),
         );
         assert.deepEqual(currentPrismEndpoint(), Option.getOrUndefined(endpoint));
 
