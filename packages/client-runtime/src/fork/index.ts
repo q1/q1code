@@ -1,2 +1,2 @@
 export * from "./forkFlags.ts";
-export * from "./cliproxyClient.ts";
+export * from "./prismClient.ts";
