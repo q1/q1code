@@ -23,6 +23,14 @@ export const FORK_PRISM_SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["cliproxy prism proxy sidecar external mode base url version ready failed"],
   },
   {
+    id: "prism-usage-source",
+    title: "Show on Usage → Limits",
+    to: "/settings/prism",
+    searchTerms: [
+      "cliproxy prism usage limits quota pooled accounts publish usage provider source",
+    ],
+  },
+  {
     id: "prism-restart",
     title: "Restart proxy",
     to: "/settings/prism",
