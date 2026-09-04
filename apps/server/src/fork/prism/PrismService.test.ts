@@ -14,6 +14,7 @@ import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import { FetchHttpClient } from "effect/unstable/http";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
@@ -37,8 +38,56 @@ import {
   type PrismStatus,
   layerWithoutRuntime,
   parsePrismBaseUrl,
+  readinessLayer,
   redactSecrets,
 } from "./PrismService.ts";
+
+it.effect("readiness uses authenticated local state when the release service is unavailable", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ url: string; authorization: string | null }> = [];
+    const fetch: typeof globalThis.fetch = Object.assign(
+      async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+        const url = input instanceof Request ? input.url : String(input);
+        requests.push({ url, authorization: new Headers(init?.headers).get("authorization") });
+        return new URL(url).pathname === "/v0/management/routing/strategy"
+          ? Response.json({ strategy: "round-robin" })
+          : Response.json({ error: "release service unavailable" }, { status: 502 });
+      },
+      { preconnect: () => {} },
+    );
+    yield* Effect.gen(function* () {
+      const readiness = yield* PrismReadiness;
+      yield* readiness.probe({
+        baseUrl: "https://proxy.example.test",
+        managementSecret: "test-secret",
+      });
+    }).pipe(Effect.provide(readinessLayer), Effect.provideService(FetchHttpClient.Fetch, fetch));
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.url, "https://proxy.example.test/v0/management/routing/strategy");
+    assert.equal(requests[0]?.authorization, "Bearer test-secret");
+  }),
+);
+
+it.effect("readiness rejects an invalid management secret", () =>
+  Effect.gen(function* () {
+    const readiness = yield* PrismReadiness;
+    const result = yield* readiness
+      .probe({
+        baseUrl: "https://proxy.example.test",
+        managementSecret: "test-secret",
+      })
+      .pipe(Effect.flip);
+    assert.include(result.detail, "HTTP 401");
+    assert.include(result.detail, "check the management secret");
+    assert.notInclude(result.detail, "test-secret");
+  }).pipe(
+    Effect.provide(readinessLayer),
+    Effect.provideService(
+      FetchHttpClient.Fetch,
+      Object.assign(async () => new Response(null, { status: 401 }), { preconnect: () => {} }),
+    ),
+  ),
+);
 
 interface FakeLaunch {
   readonly pid: number;

@@ -13,6 +13,9 @@ export const PRISM_BINARY_NAME = "cli-proxy-api";
 
 export const PRISM_DEFAULT_PORT = 8317;
 
+/** Authenticated, local-only gateway state; readiness must not depend on GitHub release access. */
+export const PRISM_MANAGEMENT_PROBE_PATH = "/routing/strategy";
+
 export type PrismPlatformKey = keyof typeof pin.platforms;
 
 export const PRISM_PLATFORM_KEYS = Object.keys(pin.platforms) as ReadonlyArray<PrismPlatformKey>;
