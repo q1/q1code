@@ -418,6 +418,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         await clearActiveEnvironment()
     }
 
+    func prism(_ input: PrismRequest, environmentID: String) async throws -> PrismResponse {
+        let client = try await projectCreationClient(environmentID: environmentID)
+        return try await client.prism(input)
+    }
+
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {
         let environments = try await runtime.environments().filter(\.isEnabled)
         let runtime = runtime
@@ -4338,7 +4343,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 : .disconnected,
             connectionDetail: environment.isEnabled
                 ? environmentConnectionDetails[environment.id]
-                : nil
+                : nil,
+            prismEnabled: serverConfigsByEnvironmentID[environment.id]?.environment?.capabilities.forkFlags?["prism"]
         )
     }
 

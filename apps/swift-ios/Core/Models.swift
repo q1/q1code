@@ -114,6 +114,7 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
         public let threadPullRequestLinking: Bool?
         public let serverSelfUpdate: String?
         public let serverSelfUpdateProgress: Bool?
+        public let forkFlags: [String: Bool]?
 
         private enum CodingKeys: String, CodingKey {
             case repositoryIdentity
@@ -129,12 +130,14 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
             case threadPullRequestLinking
             case serverSelfUpdate
             case serverSelfUpdateProgress
+            case forkFlags
         }
 
         public init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             repositoryIdentity =
                 try container.decodeIfPresent(Bool.self, forKey: .repositoryIdentity) ?? false
+            forkFlags = try container.decodeIfPresent([String: Bool].self, forKey: .forkFlags)
             connectionProbe = try container.decodeIfPresent(Bool.self, forKey: .connectionProbe)
             attachmentUploads = try container.decodeIfPresent(Bool.self, forKey: .attachmentUploads)
             fileAttachments = try container.decodeIfPresent(

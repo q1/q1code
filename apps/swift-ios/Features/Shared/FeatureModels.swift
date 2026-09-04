@@ -44,6 +44,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
     /// has not probed this saved environment yet.
     public var connectionState: FeatureConnection.State?
     public var connectionDetail: String?
+    public var prismEnabled: Bool?
 
     public init(
         id: String,
@@ -53,7 +54,8 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         isEnabled: Bool = true,
         source: Source = .direct,
         connectionState: FeatureConnection.State? = nil,
-        connectionDetail: String? = nil
+        connectionDetail: String? = nil,
+        prismEnabled: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -63,6 +65,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         self.source = source
         self.connectionState = connectionState
         self.connectionDetail = connectionDetail
+        self.prismEnabled = prismEnabled
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -74,6 +77,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         case source
         case connectionState
         case connectionDetail
+        case prismEnabled
     }
 
     public init(from decoder: any Decoder) throws {
@@ -88,6 +92,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
             FeatureConnection.State.self,
             forKey: .connectionState
         )
+        prismEnabled = try container.decodeIfPresent(Bool.self, forKey: .prismEnabled)
         connectionDetail = try container.decodeIfPresent(String.self, forKey: .connectionDetail)
     }
 }
