@@ -26,7 +26,6 @@ import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import {
   type PrismAccountsState,
-  describePrismAccountQuota,
   isPrismAccountPending,
   labelPrismProvider,
   parsePrismWeight,
@@ -141,10 +140,7 @@ export function PrismAccountsTable({
                   />
                 </TableCell>
                 {showUsage ? (
-                  <TableCell
-                    className="text-muted-foreground tabular-nums whitespace-nowrap"
-                    title={describePrismAccountQuota(account.usage)}
-                  >
+                  <TableCell className="text-muted-foreground tabular-nums whitespace-nowrap">
                     {account.usage
                       ? `${account.usage.success} ok · ${account.usage.failed} failed`
                       : "—"}

@@ -34,6 +34,7 @@ describe("isForkSettingsSearchItemVisible", () => {
     }
     expect(PRISM_IDS).toEqual([
       "prism-status",
+      "prism-usage-source",
       "prism-restart",
       "prism-accounts",
       "prism-add-account",
