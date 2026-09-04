@@ -12,10 +12,13 @@ import {
   describePrismStatus,
   IDLE_LOGIN_FLOW,
   INITIAL_ACCOUNTS_STATE,
+  INITIAL_USAGE_SOURCE_STATE,
+  isPrismUsageSourceOn,
   nextRestartStep,
   pendingPrismLoginSession,
   reducePrismAccounts,
   reducePrismLoginFlow,
+  reducePrismUsageSource,
   selectPrismEnvironments,
   shouldPollPrismStatus,
   summarizePrismOverviews,
@@ -327,6 +330,68 @@ describe("reducePrismLoginFlow", () => {
       ),
     ).toEqual({ _tag: "failed", provider: "kimi", error: "503" });
     expect(reducePrismLoginFlow(pending(), { type: "reset" })).toBe(IDLE_LOGIN_FLOW);
+  });
+});
+
+describe("reducePrismUsageSource", () => {
+  const status = (usageSource?: boolean): PrismStatus => ({
+    state: "ready",
+    port: 8317,
+    role: "standalone",
+    ...(usageSource === undefined ? {} : { usageSource }),
+  });
+
+  it("treats a status without the field as on and follows later loads while idle", () => {
+    expect(isPrismUsageSourceOn(null)).toBe(true);
+    expect(isPrismUsageSourceOn(status())).toBe(true);
+    expect(isPrismUsageSourceOn(status(false))).toBe(false);
+    const loaded = reducePrismUsageSource(INITIAL_USAGE_SOURCE_STATE, {
+      type: "status",
+      status: status(),
+    });
+    expect(loaded).toEqual({ enabled: true, rollback: null, error: null });
+    expect(reducePrismUsageSource(loaded, { type: "status", status: status(false) }).enabled).toBe(
+      false,
+    );
+  });
+
+  it("flips optimistically, ignores a stale poll meanwhile, and settles on the saved status", () => {
+    const loaded = reducePrismUsageSource(INITIAL_USAGE_SOURCE_STATE, {
+      type: "status",
+      status: status(true),
+    });
+    const flipped = reducePrismUsageSource(loaded, { type: "toggle", enabled: false });
+    expect(flipped).toEqual({ enabled: false, rollback: true, error: null });
+    expect(reducePrismUsageSource(flipped, { type: "status", status: status(true) })).toBe(flipped);
+    expect(reducePrismUsageSource(flipped, { type: "toggle", enabled: true })).toBe(flipped);
+    expect(reducePrismUsageSource(flipped, { type: "saved", status: status(false) })).toEqual({
+      enabled: false,
+      rollback: null,
+      error: null,
+    });
+  });
+
+  it("rolls back with the error when the save fails, and clears it on the next attempt", () => {
+    const loaded = reducePrismUsageSource(INITIAL_USAGE_SOURCE_STATE, {
+      type: "status",
+      status: status(false),
+    });
+    const flipped = reducePrismUsageSource(loaded, { type: "toggle", enabled: true });
+    const failed = reducePrismUsageSource(flipped, { type: "saveFailed", error: "403" });
+    expect(failed).toEqual({ enabled: false, rollback: null, error: "403" });
+    expect(reducePrismUsageSource(failed, { type: "toggle", enabled: true }).error).toBeNull();
+  });
+
+  it("does nothing before the status arrived or when the value would not change", () => {
+    expect(
+      reducePrismUsageSource(INITIAL_USAGE_SOURCE_STATE, { type: "toggle", enabled: false }),
+    ).toBe(INITIAL_USAGE_SOURCE_STATE);
+    const loaded = reducePrismUsageSource(INITIAL_USAGE_SOURCE_STATE, {
+      type: "status",
+      status: status(true),
+    });
+    expect(reducePrismUsageSource(loaded, { type: "toggle", enabled: true })).toBe(loaded);
+    expect(reducePrismUsageSource(loaded, { type: "saveFailed", error: "late" })).toBe(loaded);
   });
 });
 
