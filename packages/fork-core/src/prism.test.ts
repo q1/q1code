@@ -7,7 +7,52 @@ import {
   prismExecutableName,
   prismPlatformKey,
   prismReleaseUrl,
+  prismAccountHealth,
 } from "./prism.ts";
+
+it("distinguishes renewal, reauthentication, cooldown, and unknown account state", () => {
+  const now = Date.parse("2026-09-04T12:00:00Z");
+  assert.equal(prismAccountHealth({ disabled: false }, now), "unknown");
+  assert.equal(
+    prismAccountHealth({ disabled: false, lifecycle: { status: "active" } }, now),
+    "ready",
+  );
+  assert.equal(
+    prismAccountHealth(
+      { disabled: false, lifecycle: { status: "active", expiresAt: "2026-09-04T11:00:00Z" } },
+      now,
+    ),
+    "expired",
+  );
+  assert.equal(
+    prismAccountHealth(
+      { disabled: false, lifecycle: { status: "error", unavailable: true, lastErrorStatus: 401 } },
+      now,
+    ),
+    "needs-login",
+  );
+  assert.equal(
+    prismAccountHealth(
+      {
+        disabled: false,
+        lifecycle: { unavailable: true, lastErrorStatus: 429, retryAt: "2026-09-04T13:00:00Z" },
+      },
+      now,
+    ),
+    "cooldown",
+  );
+  assert.equal(
+    prismAccountHealth(
+      { disabled: false, lifecycle: { unavailable: true, lastErrorStatus: 503 } },
+      now,
+    ),
+    "unavailable",
+  );
+  assert.equal(
+    prismAccountHealth({ disabled: true, lifecycle: { status: "active" } }, now),
+    "disabled",
+  );
+});
 
 it("maps host platforms to release targets the way the resource monitor does", () => {
   assert.equal(prismPlatformKey("darwin", "arm64"), "darwin-arm64");

@@ -334,6 +334,47 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismHttpApi", (it)
     }),
   );
 
+  it.effect("exposes safe lifecycle observations and omits invalid or unknown expiry", () =>
+    Effect.gen(function* () {
+      const files = [
+        {
+          name: "codex.json",
+          provider: "codex",
+          updated_at: "2026-09-04T10:00:00Z",
+          status: "error",
+          unavailable: true,
+          last_error_status: 401,
+          expires_at: "2026-09-04T11:00:00Z",
+          last_refresh: "2026-09-04T09:00:00Z",
+          next_refresh_after: "2026-09-04T12:00:00Z",
+          access_token: "private-access",
+          refresh_token: "private-refresh",
+          status_message: "private-error",
+        },
+        {
+          name: "claude.json",
+          provider: "claude",
+          updated_at: "2026-09-04T10:00:00Z",
+          expires_at: "invalid",
+        },
+      ];
+      const client = yield* makeClient(makeSidecar(READY, () => ({ body: { files } })));
+      const { accounts } = yield* client.prism.listAccounts(read);
+      assert.deepEqual(accounts[0]?.lifecycle, {
+        status: "error",
+        unavailable: true,
+        lastErrorStatus: 401,
+        expiresAt: "2026-09-04T11:00:00.000Z",
+        lastRefreshedAt: "2026-09-04T09:00:00.000Z",
+        refreshNotBefore: "2026-09-04T12:00:00.000Z",
+      });
+      assert.isUndefined(accounts[1]?.lifecycle);
+      assert.notProperty(accounts[0], "access_token");
+      assert.notProperty(accounts[0], "refresh_token");
+      assert.notProperty(accounts[0], "status_message");
+    }),
+  );
+
   it.effect("mutations need access:write and map to the sidecar's patch endpoints", () =>
     Effect.gen(function* () {
       const sidecar = makeSidecar(READY, (method, path) =>
