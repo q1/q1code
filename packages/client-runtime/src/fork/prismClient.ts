@@ -57,13 +57,11 @@ import type * as Option from "effect/Option";
 import type { HttpClient, HttpMethod } from "effect/unstable/http";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
+import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import { executeEnvironmentHttpRequest, type RemoteEnvironmentRequestError } from "../rpc/http.ts";
-import {
-  buildEnvironmentAuthHeaders,
-  withEnvironmentCredentials,
-} from "../state/environmentHttpAuth.ts";
+import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
+import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
 
 export type {
   PrismAccount,
@@ -82,6 +80,7 @@ export interface PrismClientInput {
   readonly prepared: PreparedConnection;
   /** Only needed for relay (DPoP) connections; pass `Option.none()` otherwise. */
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly timeoutMs?: number;
 }
 
@@ -134,37 +133,41 @@ const call = <A, E, R>(
   params?: Record<string, string>,
 ): Effect.Effect<A, PrismClientError, R | HttpClient.HttpClient> =>
   Effect.gen(function* () {
-    const baseUrl = new URL(input.prepared.httpBaseUrl);
-    baseUrl.pathname = "/";
-    baseUrl.search = "";
-    baseUrl.hash = "";
-    const client = yield* HttpApiClient.make(PrismHttpApi, { baseUrl: baseUrl.toString() });
-    const urls = HttpApiClient.urlBuilder(PrismHttpApi, { baseUrl: baseUrl.toString() });
-    const buildUrl = (
-      urls.prism as unknown as Record<string, (request?: { readonly params?: unknown }) => URL>
-    )[endpoint]!;
-    const requestUrl = String(buildUrl(params === undefined ? undefined : { params }));
-    const headers = yield* buildEnvironmentAuthHeaders(
-      input.prepared.httpAuthorization,
+    const remoteAuthorization =
+      input.remoteAuthorization ?? (yield* Effect.serviceOption(RemoteEnvironmentAuthorization));
+    // Upstream may refresh the relay origin without replacing the prepared socket.
+    // Build the fork client from the same origin used for each request's proof.
+    let currentBaseUrl = input.prepared.httpBaseUrl;
+    const outcome = yield* executeAuthenticatedEnvironmentHttpRequest({
+      ...input,
+      remoteAuthorization,
       method,
-      requestUrl,
-      input.signer,
-    );
-    const outcome = yield* executeEnvironmentHttpRequest(
-      requestUrl,
-      input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      withEnvironmentCredentials(
-        input.prepared.httpAuthorization,
-        request(client, headers).pipe(
-          Effect.map((value): Outcome<A> => ({ _tag: "ok", value })),
-          Effect.catch((error) =>
-            isDeclaredError(error)
-              ? Effect.succeed<Outcome<A>>({ _tag: "declared", error })
-              : Effect.fail(error),
-          ),
-        ),
-      ),
-    );
+      timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      url: (httpBaseUrl) => {
+        const baseUrl = new URL(httpBaseUrl);
+        baseUrl.pathname = "/";
+        baseUrl.search = "";
+        baseUrl.hash = "";
+        currentBaseUrl = baseUrl.toString();
+        const urls = HttpApiClient.urlBuilder(PrismHttpApi, { baseUrl: currentBaseUrl });
+        const buildUrl = (
+          urls.prism as unknown as Record<string, (request?: { readonly params?: unknown }) => URL>
+        )[endpoint]!;
+        return String(buildUrl(params === undefined ? undefined : { params }));
+      },
+      request: ({ headers }) =>
+        Effect.gen(function* () {
+          const client = yield* HttpApiClient.make(PrismHttpApi, { baseUrl: currentBaseUrl });
+          return yield* request(client, headers).pipe(
+            Effect.map((value): Outcome<A> => ({ _tag: "ok", value })),
+            Effect.catch((error) =>
+              isDeclaredError(error)
+                ? Effect.succeed<Outcome<A>>({ _tag: "declared", error })
+                : Effect.fail(error),
+            ),
+          );
+        }),
+    });
     if (outcome._tag === "ok") return outcome.value;
     return yield* outcome.error;
   });
@@ -173,6 +176,14 @@ export const getPrismStatus = (
   input: PrismClientInput,
 ): Effect.Effect<PrismStatus, PrismClientError, HttpClient.HttpClient> =>
   call(input, "GET", "status", (client, headers) => client.prism.status({ headers }));
+
+/** Turn the Limits-view publication of Prism's accounts on or off; answers with the status (`usageSource` reflects the new value). */
+export const setPrismUsageSource = (
+  input: PrismClientInput & { readonly enabled: boolean },
+): Effect.Effect<PrismStatus, PrismClientError, HttpClient.HttpClient> =>
+  call(input, "PUT", "setUsageSource", (client, headers) =>
+    client.prism.setUsageSource({ headers, payload: { enabled: input.enabled } }),
+  );
 
 export const restartPrism = (
   input: PrismClientInput,
