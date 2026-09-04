@@ -19,6 +19,14 @@ import { PrismMode, PrismRoutingStrategy } from "./config.ts";
 
 export const PRISM_API_PREFIX = "/api/fork/prism";
 
+/**
+ * The `usageLimitSources` id and label Prism publishes its pooled accounts
+ * under (upstream's CLI proxy hub kind), so the Limits view can tell the
+ * managed source from a hub the user added by hand.
+ */
+export const PRISM_USAGE_SOURCE_ID = "prism";
+export const PRISM_USAGE_SOURCE_LABEL = "Prism";
+
 export const PRISM_API_PATHS = {
   status: `${PRISM_API_PREFIX}/status`,
   restart: `${PRISM_API_PREFIX}/restart`,
