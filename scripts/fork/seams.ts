@@ -32,7 +32,7 @@ const forkOwnedPatterns: ReadonlyArray<RegExp> = [
   /^apps\/swift-ios\//,
   /^docs\/user\/swiftui-mobile\.md$/,
   // The Prism settings route (fork feature prism) lives in the upstream routes directory.
-  /^apps\/web\/src\/routes\/settings\.prism\.tsx$/,
+  /^apps\/web\/src\/routes\/(?:settings\.)?prism\.tsx$/,
 ];
 
 const markerPattern = /(?:\/\/|\/\*|#|<!--)\s*fork:/g;

@@ -180,6 +180,10 @@ public actor T3Client {
         return config
     }
 
+    public func prism(_ input: PrismRequest) async throws -> PrismResponse {
+        try await api.prism(input, environment: environment)
+    }
+
     public func usageSummary(_ input: UsageSummaryInput) async throws -> UsageSummary {
         try await rpc.request(
             RPCMethod.serverGetUsageSummary.rawValue,
