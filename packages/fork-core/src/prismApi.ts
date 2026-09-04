@@ -215,9 +215,9 @@ export const PrismSyncTombstone = Schema.Struct({
 });
 export type PrismSyncTombstone = typeof PrismSyncTombstone.Type;
 
-/** Version 2 adds `tombstones`; a version 1 bundle (no tombstones) still decodes. */
+/** Version 3 is an authoritative serving snapshot; older bundles decode for a clear upgrade error. */
 export const PrismSyncBundle = Schema.Struct({
-  version: Schema.Literals([1, 2]),
+  version: Schema.Literals([1, 2, 3]),
   generatedAt: IsoTimestamp,
   primaryEnvironmentId: Schema.String,
   entries: Schema.Array(PrismSyncEntry),
@@ -259,6 +259,7 @@ export const PrismUnavailableReason = Schema.Literals([
   "flag-off",
   "sidecar-not-ready",
   "sync-not-configured",
+  "replica-read-only",
 ]);
 export type PrismUnavailableReason = typeof PrismUnavailableReason.Type;
 
