@@ -205,6 +205,8 @@ export function describePrismUnavailable(
       return state === "failed"
         ? `Prism failed to start. Check the server log and the prism section of ${FORK_CONFIG_FILENAME}.`
         : `Prism is ${PRISM_STATE_LABELS[state].toLowerCase()}. Accounts appear once it is ready.`;
+    case "replica-read-only":
+      return "Manage pooled accounts on the primary environment. This gateway receives serving credentials only.";
     case "sync-not-configured":
       return `Cross-machine sync is not configured for this role. Set prism.sync in ${FORK_CONFIG_FILENAME}.`;
   }

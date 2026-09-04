@@ -166,6 +166,10 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
         ),
       );
 
+    const requireAccountOwner = Effect.gen(function* () {
+      if ((yield* sync.status).role === "replica") return yield* unavailable("replica-read-only");
+    });
+
     const requireReady: Effect.Effect<Prism.PrismStatus, PrismUnavailableError> = proxy.status.pipe(
       Effect.flatMap((status) =>
         status.state === "ready"
@@ -418,6 +422,7 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
           args.endpoint.name,
           Effect.gen(function* () {
             yield* requireReady;
+            yield* requireAccountOwner;
             const before = new Set((yield* listAccounts).map((account) => account.id));
             const started = yield* call(
               OAuthStartResponse,
@@ -447,6 +452,7 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
           args.endpoint.name,
           Effect.gen(function* () {
             yield* requireReady;
+            yield* requireAccountOwner;
             yield* call(
               Ignored,
               "/oauth-callback",
@@ -464,6 +470,7 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
           args.endpoint.name,
           Effect.gen(function* () {
             yield* requireReady;
+            yield* requireAccountOwner;
             const sessionId = args.params.sessionId;
             yield* call(Ignored, `/oauth-session?state=${encodeURIComponent(sessionId)}`, {
               method: "DELETE",
@@ -483,6 +490,7 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
           args.endpoint.name,
           Effect.gen(function* () {
             yield* requireReady;
+            yield* requireAccountOwner;
             const id = args.params.id;
             if (args.payload.disabled !== undefined) {
               yield* call(
@@ -508,6 +516,7 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
           args.endpoint.name,
           Effect.gen(function* () {
             yield* requireReady;
+            yield* requireAccountOwner;
             const id = args.params.id;
             yield* call(Ignored, `/auth-files?name=${encodeURIComponent(id)}`, {
               method: "DELETE",

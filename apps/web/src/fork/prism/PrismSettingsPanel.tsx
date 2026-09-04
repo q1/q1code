@@ -355,6 +355,7 @@ function PrismSettingsPanelBody() {
   };
 
   const writable = data._tag === "ready";
+  const accountWritable = writable && statusView?.status.role !== "replica";
   const showList = data._tag === "idle" || data._tag === "ready";
 
   return (
@@ -433,6 +434,7 @@ function PrismSettingsPanelBody() {
                 description={`${accounts.accounts.length} account${accounts.accounts.length === 1 ? "" : "s"}. Disabled accounts stay on disk but take no requests; weight only matters for weighted round robin.`}
               >
                 <PrismAccountsTable
+                  readOnly={!accountWritable}
                   state={accounts}
                   accounts={accounts.accounts}
                   highlightedAccountId={highlightedAccountId}
@@ -454,7 +456,11 @@ function PrismSettingsPanelBody() {
         )}
       </SettingsSection>
 
-      <PrismAddAccountSection api={api} writable={writable} onCompleted={handleLoginCompleted} />
+      <PrismAddAccountSection
+        api={api}
+        writable={accountWritable}
+        onCompleted={handleLoginCompleted}
+      />
 
       <SettingsSection {...searchableSetting("prism-routing-strategy")}>
         <SettingsRow
@@ -521,7 +527,7 @@ function PrismSyncSection({ sync }: { readonly sync: SyncView }) {
           {sync.value.primaryUrl ? (
             <SettingsRow
               title="Primary"
-              description="The environment this replica pulls auth files from and pushes refreshed tokens to."
+              description="The primary owns sign-in, account changes, and token refresh. This gateway receives encrypted serving credentials."
               control={<MonoValue className="max-w-72">{sync.value.primaryUrl}</MonoValue>}
             />
           ) : null}
