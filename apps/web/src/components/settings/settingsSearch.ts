@@ -1,6 +1,6 @@
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
-import { FORK_CLIPROXY_SETTINGS_SEARCH_ITEMS } from "../../fork/forkSettingsSearch"; // fork: cliproxy
+import { FORK_PRISM_SETTINGS_SEARCH_ITEMS } from "../../fork/forkSettingsSearch"; // fork: prism
 
 export type SettingsPath =
   | "/settings/general"
@@ -10,7 +10,7 @@ export type SettingsPath =
   | "/settings/integrations"
   | "/settings/source-control"
   | "/settings/connections"
-  | "/settings/prism" // fork: cliproxy
+  | "/settings/prism" // fork: prism
   | "/settings/archived";
 
 export interface SettingsSearchItem {
@@ -53,7 +53,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
-  "/settings/prism": "Prism", // fork: cliproxy
+  "/settings/prism": "Prism", // fork: prism
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
@@ -319,9 +319,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "q1code-feature-flags",
     title: "q1code feature flags",
     to: "/settings/general",
-    searchTerms: ["fork flags T3FORK fork.json update-check cliproxy"],
+    searchTerms: ["fork flags T3FORK fork.json update-check prism"],
   }, // fork: base
-  ...FORK_CLIPROXY_SETTINGS_SEARCH_ITEMS, // fork: cliproxy
+  ...FORK_PRISM_SETTINGS_SEARCH_ITEMS, // fork: prism
   {
     id: "keybindings",
     title: "Keybindings",
