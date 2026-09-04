@@ -38,9 +38,7 @@ export const FORK_CLIPROXY_SETTINGS_SEARCH_ITEMS = [
     id: "cliproxy-add-account",
     title: "Add account",
     to: "/settings/prism",
-    searchTerms: [
-      "cliproxy prism sign in login oauth provider codex anthropic antigravity xai kimi",
-    ],
+    searchTerms: ["cliproxy prism add account login oauth device code codex claude xai kimi"],
   },
   {
     id: "cliproxy-routing-strategy",
