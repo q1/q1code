@@ -209,7 +209,9 @@ jobs:
             (cd "$work" && grep -E " \*?${asset}\$" checksums.txt | sha256sum -c -)
             out_dir="apps/server/dist/prism/${platform_key}"
             mkdir -p "$out_dir"
-            tar -xzf "$work/$asset" -C "$out_dir" cli-proxy-api
+            member="$(tar -tzf "$work/$asset" | awk '$0 == "cli-proxy-api" || $0 == "./cli-proxy-api" { print; exit }')"
+            test -n "$member"
+            tar -xzf "$work/$asset" -C "$out_dir" "$member"
             chmod +x "$out_dir/cli-proxy-api"
           done
           rm -rf "$work"
