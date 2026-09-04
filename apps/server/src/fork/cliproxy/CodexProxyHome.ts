@@ -115,9 +115,8 @@ const ensureLink = Effect.fn("cliproxy.codexHome.ensureLink")(function* (
 ): Effect.fn.Return<void, PlatformError.PlatformError> {
   const existing = yield* fs.readLink(link).pipe(
     Effect.map((value): LinkState => ({ kind: "symlink", target: value })),
-    Effect.catch(
-      (error): Effect.Effect<LinkState> =>
-        Effect.succeed(error.reason._tag === "NotFound" ? { kind: "missing" } : { kind: "other" }),
+    Effect.catch((error): Effect.Effect<LinkState> =>
+      Effect.succeed(error.reason._tag === "NotFound" ? { kind: "missing" } : { kind: "other" }),
     ),
   );
   if (existing.kind === "other") return;
