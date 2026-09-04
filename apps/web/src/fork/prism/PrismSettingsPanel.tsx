@@ -39,15 +39,13 @@ import {
 } from "./PrismAccountsTable";
 import { PrismStatusSection } from "./PrismStatusSection";
 import {
-  type PrismUsageRow,
   describePrismRestart,
   describePrismUnavailable,
-  flattenPrismUsage,
   formatPrismSyncInterval,
   INITIAL_PRISM_ACCOUNTS,
-  labelPrismProvider,
   reducePrismAccounts,
   resolvePrismMode,
+  resolvePrismUsageSource,
 } from "./prismAccountsState";
 import { describePrismAccount, MonoValue, reportPrismError, useDocumentVisible } from "./prismUi";
 import {
@@ -72,11 +70,7 @@ const ROUTING_LABELS: Readonly<Record<PrismRoutingStrategy, string>> = {
 
 type PanelData =
   | { readonly _tag: "idle" }
-  | {
-      readonly _tag: "ready";
-      readonly routing: PrismRoutingStrategy | null;
-      readonly usage: ReadonlyArray<PrismUsageRow> | null;
-    }
+  | { readonly _tag: "ready"; readonly routing: PrismRoutingStrategy | null }
   | {
       readonly _tag: "unavailable";
       readonly reason: PrismUnavailableReason;
@@ -165,11 +159,7 @@ function PrismSettingsPanelBody() {
     if (api === null) return;
     const generation = ++loadGenerationRef.current;
     setLoading(true);
-    const [accountsResult, routing, usage] = await Promise.all([
-      api.listAccounts(),
-      api.getRouting(),
-      api.getUsage(),
-    ]);
+    const [accountsResult, routing] = await Promise.all([api.listAccounts(), api.getRouting()]);
     if (generation !== loadGenerationRef.current) return;
     setLoading(false);
     if (accountsResult._tag === "error") {
@@ -187,11 +177,7 @@ function PrismSettingsPanelBody() {
     dataLoadedRef.current = true;
     setLoadError(null);
     dispatchAccounts({ type: "loaded", accounts: accountsResult.value });
-    setData({
-      _tag: "ready",
-      routing: routing._tag === "ok" ? routing.value.strategy : null,
-      usage: usage._tag === "ok" ? flattenPrismUsage(usage.value) : null,
-    });
+    setData({ _tag: "ready", routing: routing._tag === "ok" ? routing.value.strategy : null });
   }, [api]);
 
   // What every status answer means for the rest of the panel: the list loads
@@ -335,6 +321,24 @@ function PrismSettingsPanelBody() {
     dispatchAccounts({ type: "deleteSucceeded", id: account.id });
   };
 
+  // The switch flips at once and holds the requested value until the server
+  // answers; a failure drops it, so the switch falls back to the last status.
+  const [usageSourceRequest, setUsageSourceRequest] = useState<boolean | null>(null);
+  const changeUsageSource = async (enabled: boolean) => {
+    if (api === null || usageSourceRequest !== null) return;
+    setUsageSourceRequest(enabled);
+    const result = await api.setUsageSource(enabled);
+    setUsageSourceRequest(null);
+    if (result._tag === "error") {
+      reportPrismError(
+        enabled ? "Could not show accounts on Usage" : "Could not hide accounts from Usage",
+        result.error,
+      );
+      return;
+    }
+    setStatusView({ status: result.value, receivedAt: Date.now() });
+  };
+
   const [routingBusy, setRoutingBusy] = useState(false);
   const changeRouting = async (strategy: PrismRoutingStrategy) => {
     if (api === null) return;
@@ -362,6 +366,12 @@ function PrismSettingsPanelBody() {
         canRestart={api !== null}
         restarting={restarting}
         onRestart={() => void restartProxy()}
+        usageSource={
+          usageSourceRequest ??
+          (statusView === null ? null : resolvePrismUsageSource(statusView.status))
+        }
+        usageSourcePending={usageSourceRequest !== null}
+        onUsageSourceChange={(enabled) => void changeUsageSource(enabled)}
       />
 
       <SettingsSection
@@ -481,31 +491,6 @@ function PrismSettingsPanelBody() {
       </SettingsSection>
 
       <PrismSyncSection sync={sync} />
-
-      <SettingsSection title="Usage">
-        <SettingsRow
-          title="API-key credentials"
-          description={
-            writable && data.usage && data.usage.length > 0
-              ? "Requests per API-key credential since the proxy started. OAuth accounts report nothing here."
-              : "No API-key usage recorded."
-          }
-        >
-          {writable && data.usage && data.usage.length > 0 ? (
-            <ul className="mb-2 space-y-0.5 text-xs text-muted-foreground">
-              {data.usage.map((row) => (
-                <li key={row.id} className="flex items-baseline gap-2">
-                  <span className="text-foreground/90">{labelPrismProvider(row.provider)}</span>
-                  <span className="min-w-0 truncate font-mono">{row.credential}</span>
-                  <span className="ml-auto shrink-0 tabular-nums">
-                    {row.success} ok · {row.failed} failed
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </SettingsRow>
-      </SettingsSection>
     </SettingsPageContainer>
   );
 }

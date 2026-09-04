@@ -4,19 +4,21 @@
  * helpers the tab and the mobile card render from. No React, no network; the
  * tab wires these to `@t3tools/client-runtime/fork`.
  */
-import type {
-  PrismAccount,
-  PrismAccountPatch,
-  PrismAccountUsage,
-  PrismLoginProvider,
-  PrismLoginStarted,
-  PrismLoginStatus,
-  PrismState,
-  PrismStatus,
-  PrismUnavailableReason,
+import {
+  type PrismAccount,
+  type PrismAccountPatch,
+  type PrismLoginProvider,
+  type PrismLoginStarted,
+  type PrismLoginStatus,
+  type PrismState,
+  type PrismStatus,
+  type PrismUnavailableReason,
+  PRISM_USAGE_SOURCE_ID,
+  PRISM_USAGE_SOURCE_LABEL,
 } from "@q1code/core/prismApi";
 import { type PrismMode, FORK_CONFIG_FILENAME } from "@q1code/core/config";
 import { envVarForFlag } from "@q1code/core/flags";
+import type { UsageLimitSourceSnapshot } from "@t3tools/contracts";
 
 import { formatElapsedDurationLabel } from "~/timestampFormat";
 
@@ -206,54 +208,43 @@ export function parsePrismWeight(raw: string, current: number | undefined): numb
   return value;
 }
 
-/**
- * Usage rows are keyed `<baseUrl>|<apiKey>` by the sidecar. Only the base URL
- * part is ever shown; a key with no separator is an API key on its own and
- * renders as a generic label.
- */
-/** Tooltip for the requests column: the sidecar's quota signals, or nothing when it observed none. */
-export function describePrismAccountQuota(
-  usage: PrismAccountUsage | undefined,
-): string | undefined {
-  const quota = usage?.quota;
-  if (quota === undefined) return undefined;
-  const signals = Object.entries(quota.signals).map(([key, value]) => `${key}: ${value}`);
-  return signals.length === 0 ? undefined : `Quota ${signals.join(", ")}`;
+/** Servers older than the toggle publish their accounts: the fork.json default is true. */
+export function resolvePrismUsageSource(status: Pick<PrismStatus, "usageSource">): boolean {
+  return status.usageSource ?? true;
 }
 
-export function labelPrismUsageCredential(key: string, index: number): string {
-  const separator = key.indexOf("|");
-  const baseUrl = separator === -1 ? "" : key.slice(0, separator).trim();
-  return baseUrl.length > 0 ? baseUrl : `API key ${index + 1}`;
+export interface PrismUsageProviderView {
+  /** "Managed by q1code · http://127.0.0.1:8317"; the origin only once the proxy reported one. */
+  readonly description: string;
+  /** Whether the pooled accounts reach Usage → Limits right now, in words. */
+  readonly status: string;
 }
 
-export interface PrismUsageRow {
-  /** Stable render key: provider plus the credential's position. */
-  readonly id: string;
-  readonly provider: string;
-  readonly credential: string;
-  readonly success: number;
-  readonly failed: number;
-}
-
-export function flattenPrismUsage(
-  usage: Readonly<
-    Record<string, Readonly<Record<string, { readonly success: number; readonly failed: number }>>>
-  >,
-): ReadonlyArray<PrismUsageRow> {
-  const rows: Array<PrismUsageRow> = [];
-  for (const [provider, credentials] of Object.entries(usage)) {
-    Object.entries(credentials).forEach(([key, entry], index) => {
-      rows.push({
-        id: `${provider}:${index}`,
-        provider,
-        credential: labelPrismUsageCredential(key, index),
-        success: entry.success,
-        failed: entry.failed,
-      });
-    });
+/** The Usage providers row for Prism: what it is, where it points, and whether it publishes. */
+export function describePrismUsageProvider(
+  status: Pick<PrismStatus, "state" | "baseUrl" | "usageSource"> | null,
+): PrismUsageProviderView {
+  const description = ["Managed by q1code", status?.baseUrl].filter(Boolean).join(" · ");
+  if (status === null) return { description, status: "Checking the proxy…" };
+  if (status.state !== "ready") {
+    return {
+      description,
+      status: `Proxy ${PRISM_STATE_LABELS[status.state].toLowerCase()}. Accounts appear on Usage → Limits once it is ready.`,
+    };
   }
-  return rows;
+  return {
+    description,
+    status: resolvePrismUsageSource(status)
+      ? "Pooled accounts are shown on Usage → Limits."
+      : "Not shown on Usage → Limits. Turn it on in the Prism tab.",
+  };
+}
+
+/** The `UsageLimits.tsx` seam: the managed source reads "Prism"; a hub the user added keeps upstream's label. */
+export function prismUsageSourceKindLabel(
+  source: Pick<UsageLimitSourceSnapshot, "id">,
+): string | undefined {
+  return source.id === PRISM_USAGE_SOURCE_ID ? PRISM_USAGE_SOURCE_LABEL : undefined;
 }
 
 export const PRISM_MODE_LABELS: Readonly<Record<PrismMode, string>> = {

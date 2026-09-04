@@ -1,7 +1,8 @@
 /**
- * The Prism client bound to the primary environment's prepared connection.
- * Every call resolves to a plain result so the panel never `try`s: typed
- * failures land in `error`, and only a defect rejects the promise.
+ * The Prism client bound to one environment's prepared connection (the
+ * primary environment unless the caller names another). Every call resolves
+ * to a plain result so the panel never `try`s: typed failures land in
+ * `error`, and only a defect rejects the promise.
  */
 import {
   cancelPrismLogin,
@@ -16,15 +17,16 @@ import {
   getPrismRouting,
   getPrismStatus,
   getPrismSyncStatus,
-  getPrismUsage,
   listPrismAccounts,
   patchPrismAccount,
   restartPrism,
   setPrismRouting,
+  setPrismUsageSource,
   startPrismLogin,
 } from "@t3tools/client-runtime/fork";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import type { PrismRoutingStrategy } from "@q1code/core/config";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { HttpClient } from "effect/unstable/http";
@@ -66,6 +68,9 @@ const bindCalls = (prepared: PrismClientInput["prepared"]) => {
     status: () => run(getPrismStatus),
     /** Answers with the status right after; poll `status` until `ready` or `failed`. */
     restart: () => run(restartPrism),
+    /** Answers with the status; `usageSource` carries the new value. */
+    setUsageSource: (enabled: boolean) =>
+      run((input) => setPrismUsageSource({ ...input, enabled })),
     syncStatus: () => run(getPrismSyncStatus),
     listAccounts: () => run(listPrismAccounts),
     startLogin: (provider: PrismLoginProvider) =>
@@ -81,16 +86,17 @@ const bindCalls = (prepared: PrismClientInput["prepared"]) => {
     getRouting: () => run(getPrismRouting),
     setRouting: (strategy: PrismRoutingStrategy) =>
       run((input) => setPrismRouting({ ...input, strategy })),
-    getUsage: () => run(getPrismUsage),
   };
 };
 
 export type PrismApi = ReturnType<typeof bindCalls>;
 
-/** `null` until the primary environment has a prepared connection. */
-export function usePrismApi(): PrismApi | null {
-  const environmentId = usePrimaryEnvironmentId();
-  const prepared = usePreparedConnection(environmentId);
+/** `null` until the environment (the primary one by default) has a prepared connection. */
+export function usePrismApi(environmentId?: EnvironmentId | null): PrismApi | null {
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const prepared = usePreparedConnection(
+    environmentId === undefined ? primaryEnvironmentId : environmentId,
+  );
   const preparedValue = Option.getOrNull(prepared);
   return useMemo(() => (preparedValue ? bindCalls(preparedValue) : null), [preparedValue]);
 }

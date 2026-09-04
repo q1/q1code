@@ -16,6 +16,7 @@ import { Button } from "../ui/button";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { PrismUsageProviderRow, UsageProvidersEmptyRow } from "~/fork/prism/PrismUsageProviderRow"; // fork: prism
 
 /** Hub management follows the selected device and access rules of provider settings. */
 export function UsageProviderSettings({
@@ -47,8 +48,9 @@ export function UsageProviderSettings({
           ) : null
         }
       >
+        <PrismUsageProviderRow environmentId={environmentId} /> {/* fork: prism */}
         {entries.length === 0 ? (
-          <SettingsRow title="No usage providers configured." />
+          <UsageProvidersEmptyRow environmentId={environmentId} /> // fork: prism
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;
