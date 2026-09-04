@@ -11,6 +11,8 @@
  *
  * `PUT routing` also writes `prism.routingStrategy` into `fork.json`, so the
  * strategy the sidecar is told now is the one it is started with next time.
+ * `PUT usage-source` writes `prism.usageSource` the same way and republishes
+ * the endpoint, so the Limits view follows the toggle at once.
  */
 import {
   type PrismAccount,
@@ -295,17 +297,20 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
         }
       });
 
-    /** Persist the strategy next to whatever else the file holds; only the one key moves. */
-    const persistRoutingStrategy = (strategy: PrismRoutingStrategy) =>
+    /** Persist keys of the `prism` section next to whatever else the file holds; only the given keys move. */
+    const persistPrismSection = (patch: Readonly<Record<string, unknown>>) =>
       flags
         .update((raw) => ({
           ...raw,
           prism: {
             ...(Predicate.isObject(raw.prism) && !Array.isArray(raw.prism) ? raw.prism : {}),
-            routingStrategy: strategy,
+            ...patch,
           },
         }))
         .pipe(Effect.mapError((error) => new PrismConfigError({ message: error.message })));
+
+    const persistRoutingStrategy = (strategy: PrismRoutingStrategy) =>
+      persistPrismSection({ routingStrategy: strategy });
 
     const getRouting = call(RoutingResponse, "/routing/strategy").pipe(
       Effect.flatMap(({ strategy }) =>
@@ -351,6 +356,7 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
               ...(status.lastError !== undefined ? { lastError: status.lastError } : {}),
               restarts: status.restarts,
               since: status.since,
+              usageSource: status.usageSource,
             }) satisfies PrismStatus,
         ),
       );
@@ -363,6 +369,16 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
         withWrite(
           args.endpoint.name,
           requireFlag.pipe(Effect.andThen(proxy.restart), Effect.flatMap(fullStatus)),
+        ),
+      )
+      .handle("setUsageSource", (args) =>
+        withWrite(
+          args.endpoint.name,
+          requireFlag.pipe(
+            Effect.andThen(persistPrismSection({ usageSource: args.payload.enabled })),
+            Effect.andThen(proxy.reloadUsageSource),
+            Effect.flatMap(fullStatus),
+          ),
         ),
       )
       .handle("listAccounts", (args) =>
