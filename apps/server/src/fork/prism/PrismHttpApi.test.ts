@@ -42,6 +42,7 @@ interface SidecarCall {
 const makeSidecar = (
   status: PrismStatus,
   respond: (method: string, path: string) => { readonly status?: number; readonly body: unknown },
+  overrides: Partial<PrismService["Service"]> = {},
 ) => {
   const calls: Array<SidecarCall> = [];
   const layer = Layer.succeed(
@@ -52,6 +53,7 @@ const makeSidecar = (
       endpoint: Effect.succeed(Option.none()),
       // Answers with the status a restart would have settled on.
       restart: Effect.succeed({ ...status, restarts: status.restarts + 1 }),
+      reloadUsageSource: Effect.succeed(status),
       management: {
         request: (path, options) =>
           Effect.sync(() => {
@@ -68,6 +70,7 @@ const makeSidecar = (
           }),
       },
       codexProxyHomePath: "/unused",
+      ...overrides,
     }),
   );
   return { layer, calls };
@@ -157,6 +160,7 @@ const READY: PrismStatus = {
   version: "7.2.147",
   pid: 42,
   baseUrl: "http://127.0.0.1:8317",
+  usageSource: true,
 };
 const OFF: PrismStatus = {
   state: "off",
@@ -164,6 +168,7 @@ const OFF: PrismStatus = {
   port: 8317,
   since: SINCE,
   restarts: 0,
+  usageSource: true,
 };
 
 const listing = [
@@ -225,6 +230,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismHttpApi", (it)
         mode: "sidecar",
         restarts: 0,
         since: SINCE,
+        usageSource: true,
       });
       const unauthenticated = yield* client.prism.status({ headers: {} }).pipe(Effect.flip);
       assert.equal(unauthenticated._tag, "EnvironmentAuthInvalidError");
@@ -254,6 +260,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismHttpApi", (it)
         since: SINCE,
         restarts: 2,
         lastError: "connect ECONNREFUSED",
+        usageSource: true,
       };
       const client = yield* makeClient(makeSidecar(external, () => ({ body: {} })));
       const status = yield* client.prism.status(read);
@@ -265,6 +272,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismHttpApi", (it)
         lastError: "connect ECONNREFUSED",
         restarts: 2,
         since: SINCE,
+        usageSource: true,
       });
       const ready = yield* makeClient(makeSidecar(READY, () => ({ body: {} })));
       assert.equal((yield* ready.prism.status(read)).baseUrl, "http://127.0.0.1:8317");
@@ -478,6 +486,81 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismHttpApi", (it)
       const client = yield* makeClient(sidecar, { flags });
       const failure = yield* client.prism
         .setRouting({ ...admin, payload: { strategy: "fill-first" } })
+        .pipe(Effect.flip);
+      assert.equal(failure._tag, "PrismConfigError");
+      assert.deepEqual(flags.file.raw, { prism: { port: "not-a-port" } });
+    }),
+  );
+
+  it.effect("toggles the usage source through PUT, persists it, and answers the status", () =>
+    Effect.gen(function* () {
+      const flags = makeFlags(true, {
+        flags: { prism: true },
+        prism: { port: 9001, routingStrategy: "round-robin" },
+        somethingElse: { nested: true },
+      });
+      // The fake reload reads the toggle back from the file, as the real service does.
+      const sidecar = makeSidecar(READY, () => ({ body: {} }), {
+        reloadUsageSource: Effect.sync(() => {
+          const prism = flags.file.raw.prism as { usageSource?: boolean } | undefined;
+          return { ...READY, usageSource: prism?.usageSource ?? true };
+        }),
+      });
+      const client = yield* makeClient(sidecar, { flags });
+      const off = yield* client.prism.setUsageSource({ ...admin, payload: { enabled: false } });
+      assert.equal(off.usageSource, false);
+      assert.equal(off.state, "ready");
+      assert.deepEqual(flags.file.raw, {
+        flags: { prism: true },
+        prism: { port: 9001, routingStrategy: "round-robin", usageSource: false },
+        somethingElse: { nested: true },
+      });
+      const on = yield* client.prism.setUsageSource({ ...admin, payload: { enabled: true } });
+      assert.equal(on.usageSource, true);
+      assert.deepEqual((flags.file.raw.prism as { usageSource?: boolean }).usageSource, true);
+      // Nothing goes to the sidecar: the toggle is a server-side setting.
+      assert.deepEqual(sidecar.calls, []);
+    }),
+  );
+
+  it.effect("usage-source PUT needs the flag and access:write", () =>
+    Effect.gen(function* () {
+      const flagsOff = makeFlags(false);
+      const off = yield* makeClient(
+        makeSidecar(OFF, () => ({ body: {} })),
+        { flags: flagsOff },
+      );
+      const unavailable = yield* off.prism
+        .setUsageSource({ ...admin, payload: { enabled: false } })
+        .pipe(Effect.flip);
+      assert.equal(unavailable._tag, "PrismUnavailableError");
+      assert.isTrue(
+        unavailable._tag === "PrismUnavailableError" && unavailable.reason === "flag-off",
+      );
+      assert.deepEqual(flagsOff.file.raw, {});
+
+      const flags = makeFlags(true);
+      const client = yield* makeClient(
+        makeSidecar(READY, () => ({ body: {} })),
+        { flags },
+      );
+      const forbidden = yield* client.prism
+        .setUsageSource({ ...read, payload: { enabled: false } })
+        .pipe(Effect.flip);
+      assert.equal(forbidden._tag, "EnvironmentScopeRequiredError");
+      assert.deepEqual(flags.file.raw, {});
+    }),
+  );
+
+  it.effect("answers 500 when the usage source cannot be persisted", () =>
+    Effect.gen(function* () {
+      const flags = makeFlags(true, { prism: { port: "not-a-port" } });
+      const client = yield* makeClient(
+        makeSidecar(READY, () => ({ body: {} })),
+        { flags },
+      );
+      const failure = yield* client.prism
+        .setUsageSource({ ...admin, payload: { enabled: false } })
         .pipe(Effect.flip);
       assert.equal(failure._tag, "PrismConfigError");
       assert.deepEqual(flags.file.raw, { prism: { port: "not-a-port" } });
