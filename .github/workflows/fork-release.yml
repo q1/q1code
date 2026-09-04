@@ -186,20 +186,20 @@ jobs:
             chmod +x "$target_dir"/t3-resource-monitor 2>/dev/null || true
           done
 
-      # The `cliproxy` sidecar: the pinned upstream release per platform, verified
+      # The Prism engine (CLIProxyAPI): the pinned upstream release per platform, verified
       # against the release's checksums.txt, unpacked to where
-      # apps/server/src/fork/cliproxy/CliProxyBinary.ts looks first. Platform keys
-      # and asset names come from packages/fork-core/src/cliproxy.pin.json so the
+      # apps/server/src/fork/prism/PrismBinary.ts looks first. Platform keys
+      # and asset names come from packages/fork-core/src/prism.pin.json so the
       # server's on-demand download and this step can never disagree.
-      - name: Bundle CLIProxyAPI sidecar into server package
+      - name: Bundle Prism engine into server package
         shell: bash
         run: |
           set -euo pipefail
-          pin="packages/fork-core/src/cliproxy.pin.json"
+          pin="packages/fork-core/src/prism.pin.json"
           version="$(node -p "require('./$pin').version")"
           repository="$(node -p "require('./$pin').repository")"
           base_url="https://github.com/${repository}/releases/download/v${version}"
-          work="$RUNNER_TEMP/cliproxy"
+          work="$RUNNER_TEMP/prism"
           mkdir -p "$work"
           curl -fsSL --retry 3 -o "$work/checksums.txt" "$base_url/checksums.txt"
           for platform_key in linux-x64 linux-arm64 darwin-arm64; do
@@ -207,7 +207,7 @@ jobs:
             asset="CLIProxyAPI_${version}_${target}.tar.gz"
             curl -fsSL --retry 3 -o "$work/$asset" "$base_url/$asset"
             (cd "$work" && grep -E " \*?${asset}\$" checksums.txt | sha256sum -c -)
-            out_dir="apps/server/dist/cliproxy/${platform_key}"
+            out_dir="apps/server/dist/prism/${platform_key}"
             mkdir -p "$out_dir"
             tar -xzf "$work/$asset" -C "$out_dir" cli-proxy-api
             chmod +x "$out_dir/cli-proxy-api"
@@ -248,9 +248,9 @@ jobs:
             package/dist/resource-monitor/linux-x64/t3-resource-monitor \
             package/dist/resource-monitor/linux-arm64/t3-resource-monitor \
             package/dist/resource-monitor/darwin-arm64/t3-resource-monitor \
-            package/dist/cliproxy/linux-x64/cli-proxy-api \
-            package/dist/cliproxy/linux-arm64/cli-proxy-api \
-            package/dist/cliproxy/darwin-arm64/cli-proxy-api; do
+            package/dist/prism/linux-x64/cli-proxy-api \
+            package/dist/prism/linux-arm64/cli-proxy-api \
+            package/dist/prism/darwin-arm64/cli-proxy-api; do
             grep -qx "$required" <<< "$listing" || { echo "missing $required in tarball" >&2; exit 1; }
           done
           tar -xzOf "$TARBALL" package/package.json > "$RUNNER_TEMP/packed-package.json"

@@ -10,7 +10,7 @@ import type { ExecutionEnvironmentCapabilities } from "@t3tools/contracts";
 import type { SettingsPath } from "~/components/settings/settingsSearch";
 
 const FORK_SETTINGS_PATH_FLAGS: Partial<Record<SettingsPath, ForkFlagKey>> = {
-  "/settings/prism": "cliproxy",
+  "/settings/prism": "prism",
 };
 
 export const isForkSettingsPathVisible =

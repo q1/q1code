@@ -10,7 +10,7 @@ import {
 describe("fork flags", () => {
   it("derives env var names from slugs", () => {
     expect(envVarForFlag("update-check")).toBe("T3FORK_UPDATE_CHECK");
-    expect(envVarForFlag("cliproxy")).toBe("T3FORK_CLIPROXY");
+    expect(envVarForFlag("prism")).toBe("T3FORK_PRISM");
   });
 
   it("falls back to registry defaults when nothing is set", () => {
@@ -23,13 +23,13 @@ describe("fork flags", () => {
   });
 
   it("env beats file, accepting 1/0 and true/false", () => {
-    const file = { "update-check": true, cliproxy: true };
+    const file = { "update-check": true, prism: true };
     expect(resolveForkFlags({ env: { T3FORK_UPDATE_CHECK: "0" }, file })["update-check"]).toBe(
       false,
     );
-    expect(resolveForkFlags({ env: { T3FORK_CLIPROXY: "false" }, file }).cliproxy).toBe(false);
+    expect(resolveForkFlags({ env: { T3FORK_PRISM: "false" }, file }).prism).toBe(false);
     expect(resolveForkFlags({ env: { T3FORK_UPDATE_CHECK: "1" } })["update-check"]).toBe(true);
-    expect(resolveForkFlags({ env: { T3FORK_CLIPROXY: "TRUE" } }).cliproxy).toBe(true);
+    expect(resolveForkFlags({ env: { T3FORK_PRISM: "TRUE" } }).prism).toBe(true);
   });
 
   it("ignores unparseable env values and falls through to the file", () => {
@@ -48,6 +48,6 @@ describe("fork flags", () => {
     expect(resolved).toEqual(DEFAULT_FORK_FLAGS);
     expect(Object.keys(resolved)).toEqual(Object.keys(FORK_FLAGS));
     expect(isForkFlagKey("not-a-flag")).toBe(false);
-    expect(isForkFlagKey("cliproxy")).toBe(true);
+    expect(isForkFlagKey("prism")).toBe(true);
   });
 });

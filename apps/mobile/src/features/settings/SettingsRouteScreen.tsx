@@ -60,7 +60,7 @@ import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
-import { CliProxySettingsRow } from "../../fork/cliproxy/CliProxySettingsRow"; // fork: cliproxy
+import { PrismSettingsRow } from "../../fork/prism/PrismSettingsRow"; // fork: prism
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -140,7 +140,7 @@ function LocalSettingsRouteScreen() {
         </SettingsSection>
 
         <GeneralSettingsSection />
-        <CliProxySettingsRow /* fork: cliproxy */ />
+        <PrismSettingsRow /* fork: prism */ />
 
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
@@ -527,7 +527,7 @@ function ConfiguredSettingsRouteScreen() {
         </SettingsSection>
 
         <GeneralSettingsSection />
-        <CliProxySettingsRow /* fork: cliproxy */ />
+        <PrismSettingsRow /* fork: prism */ />
 
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
