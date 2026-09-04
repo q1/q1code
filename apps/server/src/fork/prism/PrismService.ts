@@ -84,6 +84,8 @@ export interface PrismStatus {
   readonly baseUrl?: string | undefined;
   /** Last failure message; never carries a secret. Cleared once the proxy is ready. */
   readonly lastError?: string | undefined;
+  /** `prism.usageSource` (default true): the pooled accounts are published to the Limits view. */
+  readonly usageSource: boolean;
 }
 
 export class PrismSpawnError extends Schema.TaggedErrorClass<PrismSpawnError>()("PrismSpawnError", {
@@ -255,6 +257,12 @@ export class PrismService extends Context.Service<
      * reports the status.
      */
     readonly restart: Effect.Effect<PrismStatus>;
+    /**
+     * Re-read `prism.usageSource` from `fork.json` and republish the endpoint
+     * with it, so the usage-limit source follows the toggle at once. Answers
+     * the status.
+     */
+    readonly reloadUsageSource: Effect.Effect<PrismStatus>;
     /** Server-side only: calls `/v0/management<path>` with the management secret attached. */
     readonly management: {
       readonly request: (
@@ -317,12 +325,17 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const directories = prismDirectories(config.baseDir, path);
 
+  const usageSourceEnabled = flags.config.pipe(
+    Effect.map((forkConfig) => forkConfig.prism?.usageSource ?? true),
+  );
+
   const statusRef = yield* Ref.make<PrismStatus>({
     state: "off",
     mode: "sidecar",
     port: PRISM_DEFAULT_PORT,
     since: yield* nowIso,
     restarts: 0,
+    usageSource: yield* usageSourceEnabled,
   });
   const endpointRef = yield* Ref.make<Option.Option<PrismEndpoint>>(Option.none());
   const managementRef = yield* Ref.make<Option.Option<{ baseUrl: string; secret: string }>>(
@@ -439,7 +452,12 @@ const make = Effect.gen(function* () {
         routingStrategy: section.routingStrategy,
       }),
     );
-    const endpoint: PrismEndpoint = { baseUrl: `http://127.0.0.1:${port}`, apiKey };
+    const endpoint: PrismEndpoint = {
+      baseUrl: `http://127.0.0.1:${port}`,
+      apiKey,
+      managementSecret,
+      usageSource: section.usageSource ?? true,
+    };
     yield* materializeCodexHome(endpoint);
 
     const child = yield* launcher.launch({
@@ -490,7 +508,12 @@ const make = Effect.gen(function* () {
     const apiKey = yield* readStoredSecret(
       external.apiKeySecretName ?? PRISM_DEFAULT_API_KEY_SECRET_NAME,
     );
-    const endpoint: PrismEndpoint = { baseUrl: parsed.baseUrl, apiKey };
+    const endpoint: PrismEndpoint = {
+      baseUrl: parsed.baseUrl,
+      apiKey,
+      managementSecret,
+      usageSource: section.usageSource ?? true,
+    };
     yield* materializeCodexHome(endpoint);
 
     let wasReady = false;
@@ -536,6 +559,7 @@ const make = Effect.gen(function* () {
           version: undefined,
           baseUrl: undefined,
           restarts: run === 0 ? 0 : current.restarts + 1,
+          usageSource: section.usageSource ?? true,
         }));
       return mode === "external"
         ? yield* runExternal(section, begin)
@@ -626,6 +650,20 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // The toggle lives in fork.json; the endpoint and status carry a copy so the
+  // usage-limit source and the clients see the same value without re-reading.
+  const reloadUsageSource = Effect.gen(function* () {
+    const usageSource = yield* usageSourceEnabled;
+    const endpoint = yield* Ref.get(endpointRef);
+    if (Option.isSome(endpoint) && endpoint.value.usageSource !== usageSource) {
+      yield* publish(Option.some({ ...endpoint.value, usageSource }));
+    }
+    if ((yield* Ref.get(statusRef)).usageSource !== usageSource) {
+      yield* patchStatus({ usageSource });
+    }
+    return yield* Ref.get(statusRef);
+  });
+
   const request: PrismService["Service"]["management"]["request"] = (requestPath, options) =>
     Effect.gen(function* () {
       const management = yield* Ref.get(managementRef);
@@ -655,6 +693,7 @@ const make = Effect.gen(function* () {
     changes: Stream.fromPubSub(statusPubSub),
     endpoint: Ref.get(endpointRef),
     restart,
+    reloadUsageSource,
     management: { request },
     codexProxyHomePath: directories.codexHomeDir,
   });
