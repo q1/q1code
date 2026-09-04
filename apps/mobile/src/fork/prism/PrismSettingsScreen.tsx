@@ -51,17 +51,21 @@ import {
   PRISM_RESTART_POLL_MS,
   PRISM_ROUTING_OPTIONS,
   PRISM_STATUS_POLL_MS,
+  PRISM_USAGE_SOURCE_LABEL,
+  type PrismUsageSourceState,
   prismStateTone,
   describePrismAccount,
   describePrismError,
   describePrismStatus,
   IDLE_LOGIN_FLOW,
   INITIAL_ACCOUNTS_STATE,
+  INITIAL_USAGE_SOURCE_STATE,
   labelPrismLoginProvider,
   nextRestartStep,
   pendingPrismLoginSession,
   reducePrismAccounts,
   reducePrismLoginFlow,
+  reducePrismUsageSource,
   selectPrismEnvironments,
   shouldPollPrismStatus,
 } from "./prismSettings.logic";
@@ -188,6 +192,10 @@ function EnvironmentPanel(props: {
   const [routingError, setRoutingError] = useState<string | null>(null);
   const [routingBusy, setRoutingBusy] = useState(false);
   const [login, dispatchLogin] = useReducer(reducePrismLoginFlow, IDLE_LOGIN_FLOW);
+  const [usageSource, dispatchUsageSource] = useReducer(
+    reducePrismUsageSource,
+    INITIAL_USAGE_SOURCE_STATE,
+  );
 
   const loadStatus = useCallback(async () => {
     if (!api) return;
@@ -195,6 +203,7 @@ function EnvironmentPanel(props: {
     if (!mounted.current) return;
     if (result._tag === "ok") {
       setStatus(result.value);
+      dispatchUsageSource({ type: "status", status: result.value });
       setStatusError(null);
     } else {
       setStatusError(describePrismError(result.error));
@@ -280,6 +289,20 @@ function EnvironmentPanel(props: {
     if (step === "settled") void loadAccounts();
   };
 
+  const toggleUsageSource = (enabled: boolean) => {
+    if (!api) return;
+    dispatchUsageSource({ type: "toggle", enabled });
+    void api.setUsageSource(enabled).then((result) => {
+      if (!mounted.current) return;
+      if (result._tag === "ok") {
+        setStatus(result.value);
+        dispatchUsageSource({ type: "saved", status: result.value });
+      } else {
+        dispatchUsageSource({ type: "saveFailed", error: describePrismError(result.error) });
+      }
+    });
+  };
+
   const toggleAccount = (account: PrismAccount, enabled: boolean) => {
     if (!api) return;
     dispatchAccounts({ type: "toggle", id: account.id, disabled: !enabled });
@@ -357,7 +380,9 @@ function EnvironmentPanel(props: {
         status={status}
         error={statusError}
         restart={restart}
+        usageSource={usageSource}
         onRestart={confirmRestart}
+        onUsageSourceChange={toggleUsageSource}
       />
       <AccountsSection
         state={accounts}
@@ -413,7 +438,9 @@ function StatusSection(props: {
   readonly status: PrismStatus | null;
   readonly error: string | null;
   readonly restart: RestartState;
+  readonly usageSource: PrismUsageSourceState;
   readonly onRestart: () => void;
+  readonly onUsageSourceChange: (enabled: boolean) => void;
 }) {
   const { status } = props;
   return (
@@ -445,9 +472,33 @@ function StatusSection(props: {
           ))}
           {props.error ? <ErrorText>{props.error}</ErrorText> : null}
           {props.restart.note ? <ErrorText>{props.restart.note}</ErrorText> : null}
+          <UsageSourceRow state={props.usageSource} onChange={props.onUsageSourceChange} />
         </View>
       )}
     </SettingsSection>
+  );
+}
+
+/** Whether Prism publishes its pooled accounts to Usage → Limits; flips at once and rolls back on failure. */
+function UsageSourceRow(props: {
+  readonly state: PrismUsageSourceState;
+  readonly onChange: (enabled: boolean) => void;
+}) {
+  const { state } = props;
+  const pending = state.rollback !== null;
+  return (
+    <View className="gap-1 border-t border-border-subtle pt-3">
+      <View className="flex-row items-center gap-4">
+        <Text className="min-w-0 flex-1 text-sm text-foreground">{PRISM_USAGE_SOURCE_LABEL}</Text>
+        <ThemedSwitch
+          accessibilityLabel={PRISM_USAGE_SOURCE_LABEL}
+          disabled={pending || state.enabled === null}
+          value={state.enabled ?? true}
+          onValueChange={props.onChange}
+        />
+      </View>
+      {state.error ? <ErrorText>{state.error}</ErrorText> : null}
+    </View>
   );
 }
 
