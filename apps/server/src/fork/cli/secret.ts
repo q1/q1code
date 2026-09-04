@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
@@ -62,12 +63,13 @@ class SecretValueError extends CliError.UserError {
 /** One trailing line break is the shell's, not the secret's. */
 const normalizeSecretValue = (raw: string) => raw.replace(/\r?\n$/, "");
 
-const runWithSecretStore = <A, E>(
+/** Resolve the state directory from `--base-dir` / `--dev-url` and open the secret store there; shared with `q1code prism`. */
+export const runWithSecretStore = <A, E>(
   flags: CliAuthLocationFlags,
   run: (input: {
     readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
     readonly config: ServerConfig.ServerConfig["Service"];
-  }) => Effect.Effect<A, E, FileSystem.FileSystem>,
+  }) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
 ) =>
   Effect.gen(function* () {
     const logLevel = yield* GlobalFlag.LogLevel;
