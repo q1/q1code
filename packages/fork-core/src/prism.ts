@@ -5,6 +5,7 @@
  * Claude wiring all read it from here.
  */
 import pin from "./prism.pin.json" with { type: "json" };
+import type { PrismAccount } from "./prismApi.ts";
 
 export const PRISM_PIN = pin;
 
@@ -15,6 +16,32 @@ export const PRISM_DEFAULT_PORT = 8317;
 
 /** Authenticated, local-only gateway state; readiness must not depend on GitHub release access. */
 export const PRISM_MANAGEMENT_PROBE_PATH = "/routing/strategy";
+
+/** Separates an expired access token from an account that needs a new login. */
+export const prismAccountHealth = (
+  account: Pick<PrismAccount, "disabled" | "lifecycle">,
+  now: number,
+) => {
+  if (account.disabled) return "disabled";
+  const lifecycle = account.lifecycle;
+  if (lifecycle === undefined) return "unknown";
+  if (lifecycle.lastErrorStatus === 401) return "needs-login";
+  if (lifecycle.retryAt !== undefined && Date.parse(lifecycle.retryAt) > now) return "cooldown";
+  if (lifecycle.unavailable || lifecycle.status === "error") return "unavailable";
+  if (lifecycle.expiresAt !== undefined && Date.parse(lifecycle.expiresAt) <= now) return "expired";
+  if (lifecycle.status === "active") return "ready";
+  return "unknown";
+};
+
+export const PRISM_ACCOUNT_HEALTH_LABELS = {
+  disabled: "Disabled",
+  "needs-login": "Sign-in required",
+  cooldown: "Waiting to retry",
+  unavailable: "Unavailable",
+  expired: "Token expired",
+  ready: "Ready",
+  unknown: "Health unknown",
+} as const;
 
 export type PrismPlatformKey = keyof typeof pin.platforms;
 

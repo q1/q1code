@@ -93,6 +93,18 @@ export const PrismAccountUsage = Schema.Struct({
 });
 export type PrismAccountUsage = typeof PrismAccountUsage.Type;
 
+/** Optional observations from the gateway; absent timestamps mean unknown. */
+export const PrismAccountLifecycle = Schema.Struct({
+  status: Schema.optionalKey(Schema.String),
+  unavailable: Schema.optionalKey(Schema.Boolean),
+  expiresAt: Schema.optionalKey(IsoTimestamp),
+  lastRefreshedAt: Schema.optionalKey(IsoTimestamp),
+  refreshNotBefore: Schema.optionalKey(IsoTimestamp),
+  retryAt: Schema.optionalKey(IsoTimestamp),
+  lastErrorStatus: Schema.optionalKey(Schema.Number),
+});
+export type PrismAccountLifecycle = typeof PrismAccountLifecycle.Type;
+
 export const PrismAccount = Schema.Struct({
   /** The auth file name, unique per sidecar. */
   id: PrismAccountId,
@@ -105,6 +117,7 @@ export const PrismAccount = Schema.Struct({
   updatedAt: IsoTimestamp,
   /** Absent when the sidecar reports no counters for the file (older sidecars, disk-only listings). */
   usage: Schema.optionalKey(PrismAccountUsage),
+  lifecycle: Schema.optionalKey(PrismAccountLifecycle),
 });
 export type PrismAccount = typeof PrismAccount.Type;
 
