@@ -410,7 +410,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             </SidebarMenu>
           ) : (
             <SidebarMenu className="ps-px">
-              {/* fork: cliproxy */ navItems.map((item) => {
+              {navItems.map((item) => {
+                // fork: cliproxy
                 const Icon = item.icon;
                 const pageSections = SETTINGS_PAGE_SECTIONS[item.to];
                 const isActive = activeSettingsPath === item.to;
