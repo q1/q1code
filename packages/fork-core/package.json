@@ -15,13 +15,13 @@
       "types": "./src/config.ts",
       "import": "./src/config.ts"
     },
-    "./cliproxy": {
-      "types": "./src/cliproxy.ts",
-      "import": "./src/cliproxy.ts"
+    "./prism": {
+      "types": "./src/prism.ts",
+      "import": "./src/prism.ts"
     },
-    "./cliproxyApi": {
-      "types": "./src/cliproxyApi.ts",
-      "import": "./src/cliproxyApi.ts"
+    "./prismApi": {
+      "types": "./src/prismApi.ts",
+      "import": "./src/prismApi.ts"
     }
   },
   "scripts": {

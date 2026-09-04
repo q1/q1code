@@ -1,5 +1,5 @@
 /**
- * Fork-owned settings search entries and their visibility. The cliproxy
+ * Fork-owned settings search entries and their visibility. The Prism
  * entries live here and reach `SETTINGS_SEARCH_ITEMS` through one spread
  * seam, so `searchableSetting(id)` knows them and a drifted id fails
  * typecheck. An entry behind a feature flag is listed with that flag, so
@@ -15,39 +15,39 @@ import type {
 } from "~/components/settings/settingsSearch";
 
 /** Sections of the Prism tab, in page order. */
-export const FORK_CLIPROXY_SETTINGS_SEARCH_ITEMS = [
+export const FORK_PRISM_SETTINGS_SEARCH_ITEMS = [
   {
-    id: "cliproxy-status",
+    id: "prism-status",
     title: "Proxy status",
     to: "/settings/prism",
     searchTerms: ["cliproxy prism proxy sidecar external mode base url version ready failed"],
   },
   {
-    id: "cliproxy-restart",
+    id: "prism-restart",
     title: "Restart proxy",
     to: "/settings/prism",
     searchTerms: ["cliproxy prism sidecar relaunch reconnect re-check"],
   },
   {
-    id: "cliproxy-accounts",
+    id: "prism-accounts",
     title: "Accounts",
     to: "/settings/prism",
     searchTerms: ["cliproxy prism proxy pool oauth claude codex weight enabled requests"],
   },
   {
-    id: "cliproxy-add-account",
+    id: "prism-add-account",
     title: "Add account",
     to: "/settings/prism",
     searchTerms: ["cliproxy prism add account login oauth device code codex claude xai kimi"],
   },
   {
-    id: "cliproxy-routing-strategy",
+    id: "prism-routing-strategy",
     title: "Routing strategy",
     to: "/settings/prism",
     searchTerms: ["cliproxy prism round robin weighted fill first load balancing"],
   },
   {
-    id: "cliproxy-sync",
+    id: "prism-sync",
     title: "Sync",
     to: "/settings/prism",
     searchTerms: ["cliproxy prism replica primary interval last sync cross-machine"],
@@ -55,7 +55,7 @@ export const FORK_CLIPROXY_SETTINGS_SEARCH_ITEMS = [
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 const FORK_SEARCH_ITEM_FLAGS: Partial<Record<SettingsSearchItemId, ForkFlagKey>> =
-  Object.fromEntries(FORK_CLIPROXY_SETTINGS_SEARCH_ITEMS.map((item) => [item.id, "cliproxy"]));
+  Object.fromEntries(FORK_PRISM_SETTINGS_SEARCH_ITEMS.map((item) => [item.id, "prism"]));
 
 /** Predicate for the primary environment's capabilities; upstream entries always pass. */
 export const isForkSettingsSearchItemVisible =

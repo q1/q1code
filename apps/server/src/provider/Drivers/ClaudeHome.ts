@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { withCliProxyClaudeEnvironment } from "../../fork/cliproxy/CliProxyEnvironment.ts"; // fork: cliproxy
+import { withPrismClaudeEnvironment } from "../../fork/prism/PrismEnvironment.ts"; // fork: prism
 import { expandHomePath } from "../../pathExpansion.ts";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
@@ -22,7 +22,7 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   config: Pick<ClaudeSettings, "homePath">,
   baseEnv?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<NodeJS.ProcessEnv, never, Path.Path> {
-  const resolvedBaseEnv = withCliProxyClaudeEnvironment(baseEnv ?? process.env); // fork: cliproxy
+  const resolvedBaseEnv = withPrismClaudeEnvironment(baseEnv ?? process.env); // fork: prism
   const homePath = config.homePath.trim();
   if (homePath.length === 0) return resolvedBaseEnv;
   const resolvedHomePath = yield* resolveClaudeHomePath(config);

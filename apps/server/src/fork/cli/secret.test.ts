@@ -50,15 +50,15 @@ describe("q1code fork secret", () => {
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       const output = yield* lastLine(
-        runCli(["fork", "secret", "set", "cliproxy-sync-key", "--base-dir", baseDir], "s3cret\n"),
+        runCli(["fork", "secret", "set", "prism-sync-key", "--base-dir", baseDir], "s3cret\n"),
       );
-      assert.equal(output, "Stored secret cliproxy-sync-key.\n");
-      const file = secretPath(baseDir, "cliproxy-sync-key");
+      assert.equal(output, "Stored secret prism-sync-key.\n");
+      const file = secretPath(baseDir, "prism-sync-key");
       assert.equal(NodeFS.readFileSync(file, "utf8"), "s3cret");
       assert.equal(NodeFS.statSync(file).mode & 0o777, 0o600);
 
       // A second set overwrites.
-      yield* runCli(["fork", "secret", "set", "cliproxy-sync-key", "--base-dir", baseDir], "next");
+      yield* runCli(["fork", "secret", "set", "prism-sync-key", "--base-dir", baseDir], "next");
       assert.equal(NodeFS.readFileSync(file, "utf8"), "next");
     }),
   );
@@ -73,7 +73,7 @@ describe("q1code fork secret", () => {
           "fork",
           "secret",
           "set",
-          "cliproxy-sync-token",
+          "prism-sync-token",
           "--value-file",
           valueFile,
           "--base-dir",
@@ -81,10 +81,7 @@ describe("q1code fork secret", () => {
         ],
         "ignored",
       );
-      assert.equal(
-        NodeFS.readFileSync(secretPath(baseDir, "cliproxy-sync-token"), "utf8"),
-        "tok-1",
-      );
+      assert.equal(NodeFS.readFileSync(secretPath(baseDir, "prism-sync-token"), "utf8"), "tok-1");
     }),
   );
 

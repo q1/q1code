@@ -86,7 +86,7 @@ const runWithSecretStore = <A, E>(
   });
 
 const nameArgument = Argument.string("name").pipe(
-  Argument.withDescription("Secret name, for example `cliproxy-sync-key`."),
+  Argument.withDescription("Secret name, for example `prism-sync-key`."),
   Argument.withSchema(SecretName),
 );
 

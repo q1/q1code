@@ -7,16 +7,16 @@ const ALL_PATHS = Object.keys(SETTINGS_SECTION_LABELS) as ReadonlyArray<Settings
 const UPSTREAM_PATHS = ALL_PATHS.filter((path) => path !== "/settings/prism");
 
 describe("isForkSettingsPathVisible", () => {
-  it("hides the Prism tab until the cliproxy flag is on", () => {
+  it("hides the Prism tab until the prism flag is on", () => {
     expect(isForkSettingsPathVisible(undefined)("/settings/prism")).toBe(false);
     expect(isForkSettingsPathVisible(null)("/settings/prism")).toBe(false);
     expect(
-      isForkSettingsPathVisible({ forkFlags: { cliproxy: false, "update-check": false } })(
+      isForkSettingsPathVisible({ forkFlags: { prism: false, "update-check": false } })(
         "/settings/prism",
       ),
     ).toBe(false);
     expect(
-      isForkSettingsPathVisible({ forkFlags: { cliproxy: true, "update-check": false } })(
+      isForkSettingsPathVisible({ forkFlags: { prism: true, "update-check": false } })(
         "/settings/prism",
       ),
     ).toBe(true);
@@ -24,12 +24,12 @@ describe("isForkSettingsPathVisible", () => {
 
   it("always shows upstream's tabs, in their order", () => {
     const flagOff = isForkSettingsPathVisible({
-      forkFlags: { cliproxy: false, "update-check": false },
+      forkFlags: { prism: false, "update-check": false },
     });
     expect(ALL_PATHS.filter(flagOff)).toEqual(UPSTREAM_PATHS);
     expect(ALL_PATHS.filter(isForkSettingsPathVisible(undefined))).toEqual(UPSTREAM_PATHS);
     const flagOn = isForkSettingsPathVisible({
-      forkFlags: { cliproxy: true, "update-check": false },
+      forkFlags: { prism: true, "update-check": false },
     });
     expect(ALL_PATHS.filter(flagOn)).toEqual(ALL_PATHS);
   });

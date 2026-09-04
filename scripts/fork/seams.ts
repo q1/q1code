@@ -31,7 +31,7 @@ const forkOwnedPatterns: ReadonlyArray<RegExp> = [
   // Carried upstream PR #5178 (fork feature swift-ios, see fork/FEATURES.md).
   /^apps\/swift-ios\//,
   /^docs\/user\/swiftui-mobile\.md$/,
-  // The Prism settings route (fork feature cliproxy) lives in the upstream routes directory.
+  // The Prism settings route (fork feature prism) lives in the upstream routes directory.
   /^apps\/web\/src\/routes\/settings\.prism\.tsx$/,
 ];
 
