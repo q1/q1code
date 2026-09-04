@@ -1,3 +1,4 @@
+import { PrismNavigation } from "../../fork/prism/PrismNavigation"; // fork: prism
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
@@ -216,6 +217,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           />
         </>
       )}
+      <PrismNavigation /> {/* fork: prism */}
       <SidebarUpdatePill />
     </SidebarMenu>
   );

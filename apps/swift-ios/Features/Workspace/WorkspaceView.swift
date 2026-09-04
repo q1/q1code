@@ -55,6 +55,7 @@ public struct WorkspaceView: View {
     @State private var showingAddProject = false
     @State private var showingEnvironments = false
     @State private var showingSettings = false
+    @State private var showingPrism = false
     @State private var renamingThread: FeatureThread?
     @State private var deletingThread: FeatureThread?
     @State private var renameTitle = ""
@@ -169,6 +170,12 @@ public struct WorkspaceView: View {
             .presentationDragIndicator(.visible)
             .onAppear { model.setConnectionManagementPresented(true) }
             .onDisappear { model.setConnectionManagementPresented(false) }
+        }
+        .sheet(isPresented: $showingPrism) {
+            NavigationStack {
+                PrismView(client: model.client, environments: model.snapshot.environments)
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingPrism = false } } }
+            }
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView(model: model)
@@ -379,6 +386,19 @@ public struct WorkspaceView: View {
             .foregroundStyle(T3Colors.textSecondary)
             .accessibilityLabel(isSearching ? "Close search" : "Search tasks")
             .accessibilityIdentifier("sidebar-search-button")
+
+            if model.snapshot.environments.contains(where: { $0.prismEnabled == true }) {
+            Button { showingPrism = true } label: {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 17, weight: .medium))
+                    .frame(width: 40, height: T3Metrics.minimumTapTarget)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(T3Colors.textSecondary)
+            .accessibilityLabel("Prism")
+            .accessibilityIdentifier("sidebar-prism-button")
+
+            }
 
             Button { showingSettings = true } label: {
                 Image(systemName: "slider.horizontal.3")

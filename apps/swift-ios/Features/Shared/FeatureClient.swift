@@ -105,6 +105,7 @@ public protocol FeatureClient: AnyObject {
         change: FeatureAutomaticSettlementChange
     ) async throws -> FeatureAutomaticSettlementSettings
 
+    func prism(_ input: PrismRequest, environmentID: String) async throws -> PrismResponse
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage]
     func pullRequestLists(_ input: PullRequestListInput) async throws
         -> [FeaturePullRequestEnvironmentList]
@@ -251,6 +252,9 @@ public extension FeatureClient {
         throw FeatureCapabilityUnavailable("Automatic settlement settings")
     }
     func addProject(path: String) async throws {}
+    func prism(_ input: PrismRequest, environmentID: String) async throws -> PrismResponse {
+        throw FeatureCapabilityUnavailable("Prism")
+    }
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {
         []
     }
