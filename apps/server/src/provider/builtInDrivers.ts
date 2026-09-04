@@ -20,6 +20,7 @@
  *
  * @module provider/builtInDrivers
  */
+import { withPrismProvider } from "../fork/prism/PrismProviderDriver.ts"; // fork: prism
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
@@ -47,8 +48,8 @@ export type BuiltInDriversEnv =
  * iteration order has no functional effect on instance lookup.
  */
 export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv>> = [
-  CodexDriver,
-  ClaudeDriver,
+  withPrismProvider(CodexDriver), // fork: prism
+  withPrismProvider(ClaudeDriver), // fork: prism
   CursorDriver,
   GrokDriver,
   OpenCodeDriver,

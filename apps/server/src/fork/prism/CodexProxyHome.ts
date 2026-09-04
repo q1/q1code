@@ -1,9 +1,6 @@
 /**
- * A managed `CODEX_HOME` that routes Codex through the sidecar with no seam:
- * `config.toml` declares `model_providers.q1code` (OpenAI Responses wire API
- * against the proxy, bearer key as a static header) and selects it. A later
- * Accounts UI registers a `codex` provider instance whose `homePath` is this
- * directory; until then a user can set it by hand in Settings.
+ * A managed `CODEX_HOME` for the Prism provider instance. The driver decorator
+ * selects this home for pooled turns; the direct instance keeps its own auth.
  *
  * Non-auth state (sessions, skills, sqlite, ...) is symlinked from the user's
  * real `~/.codex` the way upstream's shadow-home overlay does, so history and

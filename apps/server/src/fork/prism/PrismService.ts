@@ -63,7 +63,11 @@ import * as ProcessRunner from "../../processRunner.ts";
 import * as ForkFlags from "../ForkFlags.ts";
 import * as PrismBinary from "./PrismBinary.ts";
 import { prismDirectories, renderPrismConfig, writePrismConfig } from "./PrismConfig.ts";
-import { type PrismEndpoint, publishPrismEndpoint } from "./PrismEnvironment.ts";
+import {
+  type PrismEndpoint,
+  publishPrismEndpoint,
+  publishPrismEnabled,
+} from "./PrismEnvironment.ts";
 import { materializeCodexProxyHome } from "./CodexProxyHome.ts";
 
 export type PrismState = "off" | "starting" | "ready" | "failed";
@@ -348,7 +352,11 @@ const make = Effect.gen(function* () {
   const runsRef = yield* Ref.make(0);
   const lifecycle = yield* Semaphore.make(1);
   const runScope = yield* Scope.make("sequential");
-  yield* Effect.addFinalizer(() => Scope.close(runScope, Exit.void));
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => publishPrismEnabled(false)).pipe(
+      Effect.andThen(Scope.close(runScope, Exit.void)),
+    ),
+  );
 
   /** Apply a patch derived from the current status; entering a new state stamps `since`. */
   const updateStatus = (update: (current: PrismStatus) => Partial<PrismStatus>) =>
@@ -620,7 +628,11 @@ const make = Effect.gen(function* () {
   });
 
   const apply = (values: { readonly prism: boolean }) =>
-    lifecycle.withPermits(1)(values.prism ? start : stop);
+    lifecycle.withPermits(1)(
+      Effect.sync(() => publishPrismEnabled(values.prism)).pipe(
+        Effect.andThen(values.prism ? start : stop),
+      ),
+    );
 
   yield* apply(yield* flags.current);
   yield* flags.changes.pipe(

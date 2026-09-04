@@ -31,6 +31,15 @@ export interface PrismEndpoint {
 export type PrismUsageLimitSourceEntry = readonly [UsageLimitSourceId, UsageLimitSourceConfig];
 
 let published: PrismEndpoint | undefined;
+let enabled = false;
+const endpointEvents = Effect.runSync(PubSub.unbounded<void>());
+export const prismEndpointChanges = Stream.fromPubSub(endpointEvents);
+export const isPrismEnabled = () => enabled;
+export const publishPrismEnabled = (value: boolean) => {
+  if (enabled === value) return;
+  enabled = value;
+  PubSub.publishUnsafe(endpointEvents, undefined);
+};
 
 /** Emits the usage-limit source entry (or its absence) each time it changes with the published endpoint. */
 const usageSourcePubSub = Effect.runSync(
@@ -50,6 +59,7 @@ const sameEntry = (
 export const publishPrismEndpoint = (endpoint: PrismEndpoint | undefined): void => {
   const before = prismUsageLimitSource();
   published = endpoint;
+  PubSub.publishUnsafe(endpointEvents, undefined);
   const after = prismUsageLimitSource();
   if (!sameEntry(before, after)) PubSub.publishUnsafe(usageSourcePubSub, after);
 };
@@ -111,20 +121,4 @@ export const withPrismUsageLimitSource = <E extends readonly [string, UsageLimit
     ([id, config]) => id === prism[0] || (origin !== undefined && originOf(config.url) === origin),
   );
   return duplicate ? entries : [...entries, prism];
-};
-
-/**
- * The `ClaudeHome.ts` seam. Returns `env` itself (same object) when the proxy is
- * not ready so flags-off behaviour is byte-identical, otherwise a copy that
- * points Claude Code at the proxy. `ANTHROPIC_AUTH_TOKEN` is the bearer form
- * Claude Code sends as `Authorization`, which is what CLIProxyAPI expects.
- */
-export const withPrismClaudeEnvironment = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
-  const endpoint = published;
-  if (endpoint === undefined) return env;
-  return {
-    ...env,
-    ANTHROPIC_BASE_URL: endpoint.baseUrl,
-    ANTHROPIC_AUTH_TOKEN: endpoint.apiKey,
-  };
 };
