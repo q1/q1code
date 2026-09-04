@@ -7,12 +7,10 @@ import * as Stream from "effect/Stream";
 
 import { makeClaudeEnvironment } from "../../provider/Drivers/ClaudeHome.ts";
 import {
-  currentPrismEndpoint,
   type PrismEndpoint,
   prismUsageLimitSource,
   prismUsageSourceChanges,
   publishPrismEndpoint,
-  withPrismClaudeEnvironment,
   withPrismUsageLimitSource,
 } from "./PrismEnvironment.ts";
 
@@ -35,28 +33,6 @@ const prismEntry = {
   managementKey: "s",
   enabled: true,
 } as const;
-
-it("returns the very same env object while no proxy is published", () => {
-  publishPrismEndpoint(undefined);
-  const env = { PATH: "/bin" };
-  assert.strictEqual(withPrismClaudeEnvironment(env), env);
-  assert.equal(currentPrismEndpoint(), undefined);
-});
-
-it("adds the Anthropic base URL and bearer token while the proxy is ready", () => {
-  publishPrismEndpoint(endpoint);
-  try {
-    const env = { PATH: "/bin", ANTHROPIC_BASE_URL: "https://api.anthropic.com" };
-    const result = withPrismClaudeEnvironment(env);
-    assert.notStrictEqual(result, env);
-    assert.equal(result.PATH, "/bin");
-    assert.equal(result.ANTHROPIC_BASE_URL, "http://127.0.0.1:8317");
-    assert.equal(result.ANTHROPIC_AUTH_TOKEN, "k");
-    assert.equal(env.ANTHROPIC_BASE_URL, "https://api.anthropic.com");
-  } finally {
-    publishPrismEndpoint(undefined);
-  }
-});
 
 it("publishes no usage-limit source while off or while the toggle is off", () => {
   publishPrismEndpoint(undefined);
@@ -134,19 +110,19 @@ it.effect("emits when the usage source appears, moves, and disappears, never on 
   }),
 );
 
-it.layer(NodeServices.layer)("ClaudeHome seam", (it) => {
-  it.effect("routes both the plain and the CLAUDE_CONFIG_DIR paths through the proxy", () =>
+it.layer(NodeServices.layer)("direct Claude environment", (it) => {
+  it.effect("keeps local authentication when Prism is published", () =>
     Effect.gen(function* () {
       publishPrismEndpoint(endpoint);
       try {
         const plain = yield* makeClaudeEnvironment({ homePath: "" }, { PATH: "/bin" });
-        assert.equal(plain.ANTHROPIC_BASE_URL, "http://127.0.0.1:8317");
-        assert.equal(plain.ANTHROPIC_AUTH_TOKEN, "k");
+        assert.isUndefined(plain.ANTHROPIC_BASE_URL);
+        assert.isUndefined(plain.ANTHROPIC_AUTH_TOKEN);
         const isolated = yield* makeClaudeEnvironment(
           { homePath: "~/.claude-x" },
           { PATH: "/bin" },
         );
-        assert.equal(isolated.ANTHROPIC_AUTH_TOKEN, "k");
+        assert.isUndefined(isolated.ANTHROPIC_AUTH_TOKEN);
         assert.isString(isolated.CLAUDE_CONFIG_DIR);
       } finally {
         publishPrismEndpoint(undefined);
