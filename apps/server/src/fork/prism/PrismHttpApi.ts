@@ -70,6 +70,7 @@ const AuthFileEntry = Schema.Struct({
   last_refresh: Schema.optionalKey(Schema.String),
   next_refresh_after: Schema.optionalKey(Schema.String),
   next_retry_after: Schema.optionalKey(Schema.String),
+  requires_login: Schema.optionalKey(Schema.Boolean),
   last_error_status: Schema.optionalKey(Schema.Number),
   // Counters and quota observations (`buildAuthFileEntry` in the sidecar); absent from disk-only listings.
   success: Schema.optionalKey(Schema.Number),
@@ -267,6 +268,7 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
           ...(lastRefreshedAt !== undefined ? { lastRefreshedAt } : {}),
           ...(refreshNotBefore !== undefined ? { refreshNotBefore } : {}),
           ...(retryAt !== undefined ? { retryAt } : {}),
+          ...(entry.requires_login !== undefined ? { requiresLogin: entry.requires_login } : {}),
           ...(entry.last_error_status !== undefined
             ? { lastErrorStatus: entry.last_error_status }
             : {}),
