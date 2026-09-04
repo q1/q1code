@@ -12,8 +12,9 @@ export const FORK_FLAGS = {
     scope: "server",
     default: false,
   },
-  cliproxy: {
-    description: "Run the bundled CLIProxyAPI sidecar and route provider CLIs through it",
+  prism: {
+    description:
+      "Run Prism, the bundled CLIProxyAPI-based account proxy, or manage an external one, and route provider CLIs through it",
     scope: "both",
     default: false,
   },

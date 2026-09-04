@@ -59,7 +59,7 @@ import { SettingsProjectGroupingRouteScreen } from "./features/settings/Settings
 import { SettingsProviderSetupRouteScreen } from "./features/settings/SettingsProviderSetupRouteScreen";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
-import { cliProxySettingsStackScreen } from "./fork/cliproxy/CliProxySettingsScreen"; // fork: cliproxy
+import { prismSettingsStackScreen } from "./fork/prism/PrismSettingsScreen"; // fork: prism
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   SettingsLegalDocumentCloseHeaderButton,
@@ -208,7 +208,7 @@ const SettingsContentStack = createNativeStackNavigator({
         title: "Usage",
       },
     }),
-    SettingsPrism: cliProxySettingsStackScreen, // fork: cliproxy
+    SettingsPrism: prismSettingsStackScreen, // fork: prism
   },
 });
 
