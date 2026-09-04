@@ -30,7 +30,7 @@ const VERSION = PRISM_PIN.version;
 const ASSET = prismAssetName(PLATFORM, ARCHITECTURE, VERSION)!;
 
 /** A real tar.gz holding a shell script named like the upstream binary. */
-const makeArchive = Effect.fn("test.makeArchive")(function* (directory: string) {
+const makeArchive = Effect.fn("test.makeArchive")(function* (directory: string, dotPrefix = false) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -40,7 +40,7 @@ const makeArchive = Effect.fn("test.makeArchive")(function* (directory: string) 
   const archivePath = path.join(directory, ASSET);
   const result = yield* runner.run({
     command: "tar",
-    args: ["-czf", archivePath, "-C", staging, "cli-proxy-api"],
+    args: ["-czf", archivePath, "-C", staging, dotPrefix ? "./cli-proxy-api" : "cli-proxy-api"],
   });
   assert.equal(result.code, 0, result.stderr);
   return yield* fs.readFile(archivePath);
@@ -84,44 +84,50 @@ const makeLayers = (input: {
 it.layer(NodeServices.layer)("PrismBinary", (it) => {
   it.effect("downloads, verifies, extracts, then serves the cache without downloading again", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "q1code-prism-binary-" });
-      const archive = yield* makeArchive(root).pipe(Effect.provide(ProcessRunner.layer));
-      const downloader = makeDownloader(
-        new Map([
-          [
-            prismChecksumsUrl(VERSION),
-            new TextEncoder().encode(`${sha256Hex(archive)}  ${ASSET}\n`),
-          ],
-          [prismReleaseUrl(PLATFORM, ARCHITECTURE, VERSION)!, archive],
-        ]),
-      );
-      const layers = makeLayers({
-        baseDir: path.join(root, "base"),
-        bundledRoot: path.join(root, "bundled"),
-        downloader: downloader.layer,
-      });
+      for (const dotPrefix of [false, true]) {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "q1code-prism-binary-" });
+        const archive = yield* makeArchive(root, dotPrefix).pipe(
+          Effect.provide(ProcessRunner.layer),
+        );
+        const downloader = makeDownloader(
+          new Map([
+            [
+              prismChecksumsUrl(VERSION),
+              new TextEncoder().encode(`${sha256Hex(archive)}  ${ASSET}\n`),
+            ],
+            [prismReleaseUrl(PLATFORM, ARCHITECTURE, VERSION)!, archive],
+          ]),
+        );
+        const layers = makeLayers({
+          baseDir: path.join(root, "base"),
+          bundledRoot: path.join(root, "bundled"),
+          downloader: downloader.layer,
+        });
 
-      const first = yield* Effect.gen(function* () {
-        const binary = yield* PrismBinary;
-        return yield* binary.resolve();
-      }).pipe(Effect.provide(layers));
-      assert.equal(first.source, "download");
-      assert.equal(first.version, VERSION);
-      assert.equal(first.path, path.join(root, "base", "prism", "bin", VERSION, "cli-proxy-api"));
-      assert.equal((yield* fs.stat(first.path)).mode & 0o111, 0o111);
-      assert.equal(yield* fs.readFileString(first.path), "#!/bin/sh\necho fake\n");
-      assert.deepEqual(yield* fs.readDirectory(path.join(root, "base", "prism", "bin")), [VERSION]);
-      assert.equal(downloader.urls.length, 2);
+        const first = yield* Effect.gen(function* () {
+          const binary = yield* PrismBinary;
+          return yield* binary.resolve();
+        }).pipe(Effect.provide(layers));
+        assert.equal(first.source, "download");
+        assert.equal(first.version, VERSION);
+        assert.equal(first.path, path.join(root, "base", "prism", "bin", VERSION, "cli-proxy-api"));
+        assert.equal((yield* fs.stat(first.path)).mode & 0o111, 0o111);
+        assert.equal(yield* fs.readFileString(first.path), "#!/bin/sh\necho fake\n");
+        assert.deepEqual(yield* fs.readDirectory(path.join(root, "base", "prism", "bin")), [
+          VERSION,
+        ]);
+        assert.equal(downloader.urls.length, 2);
 
-      const second = yield* Effect.gen(function* () {
-        const binary = yield* PrismBinary;
-        return yield* binary.resolve();
-      }).pipe(Effect.provide(layers));
-      assert.equal(second.source, "cache");
-      assert.equal(second.path, first.path);
-      assert.equal(downloader.urls.length, 2);
+        const second = yield* Effect.gen(function* () {
+          const binary = yield* PrismBinary;
+          return yield* binary.resolve();
+        }).pipe(Effect.provide(layers));
+        assert.equal(second.source, "cache");
+        assert.equal(second.path, first.path);
+        assert.equal(downloader.urls.length, 2);
+      }
     }).pipe(Effect.scoped),
   );
 
