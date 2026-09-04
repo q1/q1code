@@ -25,7 +25,7 @@ export const prismAccountHealth = (
   if (account.disabled) return "disabled";
   const lifecycle = account.lifecycle;
   if (lifecycle === undefined) return "unknown";
-  if (lifecycle.lastErrorStatus === 401) return "needs-login";
+  if (lifecycle.requiresLogin === true) return "needs-login";
   if (lifecycle.retryAt !== undefined && Date.parse(lifecycle.retryAt) > now) return "cooldown";
   if (lifecycle.unavailable || lifecycle.status === "error") return "unavailable";
   if (lifecycle.expiresAt !== undefined && Date.parse(lifecycle.expiresAt) <= now) return "expired";
