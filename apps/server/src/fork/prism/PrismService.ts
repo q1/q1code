@@ -24,7 +24,7 @@
  */
 import * as NodeNet from "node:net";
 
-import { PRISM_DEFAULT_PORT } from "@q1code/core/prism";
+import { PRISM_DEFAULT_PORT, PRISM_MANAGEMENT_PROBE_PATH } from "@q1code/core/prism";
 import {
   PRISM_DEFAULT_API_KEY_SECRET_NAME,
   PRISM_DEFAULT_MANAGEMENT_SECRET_NAME,
@@ -276,7 +276,7 @@ export class PrismService extends Context.Service<
 >()("t3/fork/prism/PrismService") {}
 
 const SECRET_BYTES = 32;
-const MANAGEMENT_PROBE_PATH = "/v0/management/latest-version";
+const MANAGEMENT_PROBE_PATH = `/v0/management${PRISM_MANAGEMENT_PROBE_PATH}`;
 
 const toHex = (bytes: Uint8Array) =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -713,7 +713,7 @@ const tcpConnect = (port: number) =>
     return Effect.sync(() => socket.destroy());
   });
 
-/** `GET /v0/management/latest-version` with the bearer secret; the cheapest authenticated management call. */
+/** Reads local routing state with the bearer secret, without querying remote release servers. */
 const managementProbe = (baseUrl: string, secret: string) =>
   HttpClient.HttpClient.pipe(
     Effect.flatMap((client) =>
