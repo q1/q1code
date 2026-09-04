@@ -1,4 +1,5 @@
 import type { PrismAccount } from "@q1code/core/prismApi";
+import { PRISM_ACCOUNT_HEALTH_LABELS, prismAccountHealth } from "@q1code/core/prism";
 import { Trash2Icon, UsersIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -22,6 +23,7 @@ import {
   TableRow,
 } from "~/components/ui/table";
 import { cn } from "~/lib/utils";
+import { useNowMinute } from "~/hooks/useNowMinute";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import {
@@ -86,8 +88,18 @@ export function PrismAccountsTable({
   readonly onDelete: (account: PrismAccount) => void;
 }) {
   const showUsage = accounts.some((account) => account.usage !== undefined);
+  const now = Date.parse(`${useNowMinute()}:00Z`);
+  const needsLogin = accounts.filter(
+    (account) => prismAccountHealth(account, now) === "needs-login",
+  );
   return (
     <div className="mt-1 mb-2 -mx-2">
+      {needsLogin.length > 0 ? (
+        <p role="status" className="px-2 py-2 text-sm text-destructive">
+          {needsLogin.length} {needsLogin.length === 1 ? "account needs" : "accounts need"} a new
+          sign-in. Use Add account to reconnect the affected provider.
+        </p>
+      ) : null}
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -104,6 +116,7 @@ export function PrismAccountsTable({
           {accounts.map((account) => {
             const pending = isPrismAccountPending(state, account.id);
             const updated = formatRelativeTimeLabel(account.updatedAt);
+            const health = prismAccountHealth(account, now);
             return (
               <TableRow
                 key={account.id}
@@ -122,6 +135,19 @@ export function PrismAccountsTable({
                       {account.label}
                     </span>
                   ) : null}
+                  <span
+                    className={cn(
+                      "block text-xs text-muted-foreground",
+                      health === "needs-login" && "text-destructive",
+                    )}
+                  >
+                    {PRISM_ACCOUNT_HEALTH_LABELS[health]}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    {account.lifecycle?.expiresAt
+                      ? `Token expiry: ${new Date(account.lifecycle.expiresAt).toLocaleString()}`
+                      : "Token expiry unknown"}
+                  </span>
                 </TableCell>
                 <TableCell>
                   <Switch
