@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { PrismSyncFailedError, type PrismSyncEntry } from "@q1code/core/prismApi";
 import { DEFAULT_FORK_FLAGS, type ForkFlagValues } from "@q1code/core/flags";
@@ -20,7 +21,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import { ForkFlagsEnvironment, ForkFlagsService } from "../ForkFlags.ts";
 import { prismDirectories } from "./PrismConfig.ts";
-import { deriveSyncKey, encryptSyncEntry } from "./PrismSyncCrypto.ts";
+import { deriveSyncKey, decryptSyncEntry, encryptSyncEntry } from "./PrismSyncCrypto.ts";
 import {
   PrismSyncService,
   PrismSyncTicker,
@@ -30,6 +31,11 @@ import {
   pruneSyncTombstones,
   SYNC_TOMBSTONE_TTL_MILLIS,
 } from "./PrismSync.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeTombstoneJson = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
+);
 
 const T0 = "2026-09-02T10:00:00.000Z";
 const T1 = "2026-09-02T11:00:00.000Z";
@@ -208,9 +214,7 @@ const readTombstoneFile = Effect.gen(function* () {
   const { baseDir } = yield* ServerConfig.ServerConfig;
   const { tombstonesPath } = prismDirectories(baseDir, path);
   if (!(yield* fs.exists(tombstonesPath))) return null;
-  // Inspected as raw wire JSON so the test sees exactly what is on disk.
-  // @effect-diagnostics-next-line preferSchemaOverJson:off
-  return JSON.parse(yield* fs.readFileString(tombstonesPath)) as Record<string, string>;
+  return yield* decodeTombstoneJson(yield* fs.readFileString(tombstonesPath));
 });
 
 const readAuths = Effect.gen(function* () {
@@ -230,7 +234,7 @@ const readAuths = Effect.gen(function* () {
 const KEY = "shared-secret";
 
 it.layer(NodeServices.layer, { excludeTestServices: true })("PrismSync", (it) => {
-  it.effect("primary exports encrypted entries and applies only newer pushes", () =>
+  it.effect("primary exports serving snapshots and rejects credential pushes", () =>
     Effect.gen(function* () {
       const primary = makeNode({
         id: "primary",
@@ -250,22 +254,15 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismSync", (it) =>
         ]);
         assert.isFalse(bundle.entries.some((entry) => entry.ciphertext.includes("a1")));
 
-        // Re-encrypt the exported entries under new stamps to simulate a replica push.
-        const aOld = { ...bundle.entries.find((entry) => entry.id === "a.json")!, updatedAt: T0 };
-        const bNew = { ...bundle.entries.find((entry) => entry.id === "b.json")!, updatedAt: T2 };
-        const result = yield* service.applyPush([aOld, bNew]);
-        assert.deepEqual(result, { written: ["b.json"], skipped: ["a.json"], deleted: [] });
-
-        const rejected = yield* service
-          .applyPush([{ id: "c.json", updatedAt: T2, ciphertext: "AAAA" }])
-          .pipe(Effect.exit);
+        assert.equal(bundle.version, 3);
+        const rejected = yield* service.applyPush(bundle.entries).pipe(Effect.exit);
         assert.isTrue(Exit.isFailure(rejected));
         assert.deepEqual(Object.keys(yield* readAuths).sort(), ["a.json", "b.json"]);
       }).pipe(Effect.provide(primary));
     }),
   );
 
-  it.effect("primary records, exports, and applies tombstones; a newer file wins over one", () =>
+  it.effect("primary records deletions but rejects replica tombstones", () =>
     Effect.gen(function* () {
       const primary = makeNode({
         id: "primary-tombstones",
@@ -282,7 +279,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismSync", (it) =>
         // A deletion made here (the sidecar already removed the file).
         yield* service.recordTombstone("gone.json");
         const bundle = yield* service.exportBundle;
-        assert.equal(bundle.version, 2);
+        assert.equal(bundle.version, 3);
         assert.deepEqual(
           bundle.tombstones?.map((tombstone) => tombstone.id),
           ["gone.json"],
@@ -290,21 +287,14 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismSync", (it) =>
         const file = yield* readTombstoneFile;
         assert.deepEqual(Object.keys(file ?? {}), ["gone.json"]);
 
-        // A replica push: bury `old.json` (older than the tombstone), fail to bury
-        // `refreshed.json` (newer than its tombstone), bring `keep.json` along.
-        const keep = bundle.entries.find((entry) => entry.id === "keep.json")!;
-        const result = yield* service.applyPush(
-          [keep],
-          [
-            { id: "old.json", deletedAt: T1 },
-            { id: "refreshed.json", deletedAt: T2 },
-          ],
-        );
-        assert.deepEqual(result, { written: [], skipped: ["keep.json"], deleted: ["old.json"] });
-        assert.deepEqual(Object.keys(yield* readAuths).sort(), ["keep.json", "refreshed.json"]);
-        assert.deepEqual(Object.keys((yield* readTombstoneFile) ?? {}).sort(), [
-          "gone.json",
+        const rejected = yield* service
+          .applyPush([], [{ id: "old.json", deletedAt: T1 }])
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(rejected));
+        assert.deepEqual(Object.keys(yield* readAuths).sort(), [
+          "keep.json",
           "old.json",
+          "refreshed.json",
         ]);
       }).pipe(Effect.provide(primary));
     }),
@@ -342,27 +332,20 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismSync", (it) =>
         const service = yield* PrismSyncService;
         yield* writeAuth("a.json", '{"v":"a"}', T1);
         const entry = (yield* service.exportBundle).entries[0]!;
-        const underEnvKey = yield* encryptSyncEntry(
-          deriveSyncKey("env-key"),
-          new TextEncoder().encode('{"v":"b"}'),
+        const rejected = yield* decryptSyncEntry(deriveSyncKey("env-key"), entry.ciphertext).pipe(
+          Effect.exit,
         );
-        const rejected = yield* service
-          .applyPush([{ ...entry, updatedAt: T2, ciphertext: underEnvKey }])
-          .pipe(Effect.exit);
         assert.isTrue(Exit.isFailure(rejected));
-        const underStoreKey = yield* encryptSyncEntry(
-          deriveSyncKey("store-key"),
-          new TextEncoder().encode('{"v":"b"}'),
-        );
-        const accepted = yield* service.applyPush([
-          { ...entry, updatedAt: T2, ciphertext: underStoreKey },
-        ]);
-        assert.deepEqual(accepted.written, ["a.json"]);
+        const accepted = yield* decryptSyncEntry(deriveSyncKey("store-key"), entry.ciphertext);
+        assert.deepEqual(yield* decodeJson(new TextDecoder().decode(accepted)), {
+          v: "a",
+          refresh_disabled: true,
+        });
       }).pipe(Effect.provide(named));
     }),
   );
 
-  it.effect("external mode reads and writes the proxy's own auth dir, not the managed one", () =>
+  it.effect("external mode exports from the gateway auth dir without modifying credentials", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -392,12 +375,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismSync", (it) =>
           bundle.entries.map((entry) => [entry.id, entry.updatedAt]),
           [["a.json", T1]],
         );
-        const pushed = { ...bundle.entries[0]!, updatedAt: T2 };
-        const result = yield* service.applyPush([pushed], [{ id: "gone.json", deletedAt: T0 }]);
-        assert.deepEqual(result, { written: ["a.json"], skipped: [], deleted: [] });
         assert.equal(yield* fs.readFileString(file), '{"v":"a1"}');
         assert.isFalse(yield* fs.exists(managed.authsDir));
-        // Tombstones stay with q1code's own state.
+        yield* service.recordTombstone("gone.json");
         assert.isTrue(yield* fs.exists(managed.tombstonesPath));
       }).pipe(Effect.provide(node));
     }).pipe(Effect.scoped),
@@ -436,7 +416,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismSync", (it) =>
   );
 
   it.effect(
-    "replica loop pulls newer files, pushes back newer local ones, and reports status",
+    "replica uses the primary snapshot despite clock skew and never pushes local changes",
     () =>
       Effect.gen(function* () {
         const ticks = yield* Queue.unbounded<void>();
@@ -512,38 +492,90 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismSync", (it) =>
 
             yield* awaitCycle;
             const replicaFiles = yield* readAuths;
-            assert.equal(replicaFiles["primary-only.json"], '{"v":"p"}');
-            assert.equal(replicaFiles["shared.json"], '{"v":"replica-new"}');
+            assert.deepEqual(yield* decodeJson(replicaFiles["primary-only.json"]!), {
+              v: "p",
+              refresh_disabled: true,
+            });
+            assert.deepEqual(yield* decodeJson(replicaFiles["shared.json"]!), {
+              v: "primary-old",
+              refresh_disabled: true,
+            });
             assert.isUndefined(replicaFiles["deleted-on-primary.json"]);
-            assert.isUndefined(replicaFiles["deleted-on-replica.json"]);
+            assert.isDefined(replicaFiles["deleted-on-replica.json"]);
+            assert.isUndefined(replicaFiles["replica-only.json"]);
             assert.deepEqual(Object.keys((yield* readTombstoneFile) ?? {}).sort(), [
               "deleted-on-primary.json",
-              "deleted-on-replica.json",
             ]);
-            assert.equal(pushes.length, 1);
-            assert.deepEqual(pushes[0]!.map((entry) => entry.id).sort(), [
-              "replica-only.json",
-              "shared.json",
-            ]);
+            assert.equal(pushes.length, 0);
             const status = yield* replicaService.status;
             assert.equal(status.role, "replica");
             assert.isUndefined(status.lastSyncError);
 
             // A second cycle with nothing new moves no files.
             yield* awaitCycle;
-            assert.equal(pushes.length, 1);
+            assert.equal(pushes.length, 0);
           }).pipe(Effect.provide(replica));
 
           const primaryFiles = yield* readAuths;
-          assert.equal(primaryFiles["shared.json"], '{"v":"replica-new"}');
-          assert.equal(primaryFiles["replica-only.json"], '{"v":"r"}');
+          assert.equal(primaryFiles["shared.json"], '{"v":"primary-old"}');
+          assert.isUndefined(primaryFiles["replica-only.json"]);
           assert.equal(primaryFiles["primary-only.json"], '{"v":"p"}');
-          assert.isUndefined(primaryFiles["deleted-on-replica.json"]);
+          assert.isDefined(primaryFiles["deleted-on-replica.json"]);
           assert.deepEqual(Object.keys((yield* readTombstoneFile) ?? {}).sort(), [
             "deleted-on-primary.json",
-            "deleted-on-replica.json",
           ]);
         }).pipe(Effect.provide(primary));
+      }),
+  );
+
+  it.effect(
+    "replicas keep their snapshot when a bundle is legacy, corrupt, or contains duplicate accounts",
+    () =>
+      Effect.gen(function* () {
+        const valid = yield* encryptSyncEntry(
+          deriveSyncKey(KEY),
+          new TextEncoder().encode('{"access_token":"test-new"}'),
+        );
+        const invalid = yield* encryptSyncEntry(
+          deriveSyncKey(KEY),
+          new TextEncoder().encode("not-json"),
+        );
+        const entry = { id: "new.json", updatedAt: T1, ciphertext: valid };
+        for (const bundle of [
+          { version: 2 as const, entries: [entry] },
+          {
+            version: 3 as const,
+            entries: [entry, { id: "bad.json", updatedAt: T1, ciphertext: "corrupt" }],
+          },
+          {
+            version: 3 as const,
+            entries: [entry, { id: "bad.json", updatedAt: T1, ciphertext: invalid }],
+          },
+          { version: 3 as const, entries: [entry, entry] },
+        ]) {
+          const transport = Layer.succeed(
+            PrismSyncTransport,
+            PrismSyncTransport.of({
+              fetchExport: () =>
+                Effect.succeed({ ...bundle, generatedAt: T2, primaryEnvironmentId: "primary" }),
+              push: () => Effect.die("unexpected push"),
+            }),
+          );
+          const replica = makeNode({
+            id: "replica-invalid",
+            config: { prism: { sync: { role: "replica", primaryUrl: "http://primary" } } },
+            env: { Q1CODE_PRISM_SYNC_KEY: KEY, Q1CODE_PRISM_SYNC_TOKEN: "token" },
+            transport,
+            ticker: () => Stream.empty,
+          });
+          yield* Effect.gen(function* () {
+            yield* writeAuth("old.json", '{"access_token":"test-kept"}', T0);
+            const service = yield* PrismSyncService;
+            const result = yield* service.syncNow.pipe(Effect.exit);
+            assert.isTrue(Exit.isFailure(result));
+            assert.deepEqual(yield* readAuths, { "old.json": '{"access_token":"test-kept"}' });
+          }).pipe(Effect.provide(replica));
+        }
       }),
   );
 
