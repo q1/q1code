@@ -5,7 +5,7 @@ description: Scaffold a new q1code fork feature: registry entry in fork/FEATURES
 
 # Fork Feature
 
-Read `fork/FORK.md` first, then the `base` and `cliproxy` entries in `fork/FEATURES.md` as examples. This skill produces the skeleton and the plan; feature code comes after and follows the plan.
+Read `fork/FORK.md` first, then the `base` and `prism` entries in `fork/FEATURES.md` as examples. This skill produces the skeleton and the plan; feature code comes after and follows the plan.
 
 ## 1. Name it
 

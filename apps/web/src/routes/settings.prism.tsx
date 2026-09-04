@@ -1,8 +1,8 @@
-// fork: cliproxy (fork-owned file)
+// fork: prism (fork-owned file)
 import { createFileRoute } from "@tanstack/react-router";
 
-import { CliProxySettingsPanel } from "../fork/cliproxy/CliProxySettingsPanel";
+import { PrismSettingsPanel } from "../fork/prism/PrismSettingsPanel";
 
 export const Route = createFileRoute("/settings/prism")({
-  component: CliProxySettingsPanel,
+  component: PrismSettingsPanel,
 });

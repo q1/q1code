@@ -9,7 +9,7 @@
  *
  * `update` is the one writer: it edits the raw JSON so unknown keys survive,
  * validates the result against the schema, writes temp + fsync + rename, and
- * re-reads, so a feature that persists a setting (cliproxy routing) never
+ * re-reads, so a feature that persists a setting (prism routing) never
  * clobbers what another feature or the user put in the file.
  */
 import {
@@ -92,6 +92,13 @@ export const forkConfigPath = (stateDir: string, path: Path.Path) =>
 
 const sameFlags = (left: ForkFlagValues, right: ForkFlagValues) =>
   FORK_FLAG_KEYS.every((key) => left[key] === right[key]);
+
+/** The `prism` feature was called `cliproxy`; these spellings are ignored and warned about once at start. */
+const LEGACY_PRISM_ENV_VARS = [
+  "T3FORK_CLIPROXY",
+  "Q1CODE_CLIPROXY_SYNC_TOKEN",
+  "Q1CODE_CLIPROXY_SYNC_KEY",
+] as const;
 
 const RawJsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 const decodeRawJsonObject = Schema.decodeUnknownExit(RawJsonObject);
@@ -221,7 +228,25 @@ const make = Effect.gen(function* () {
     );
   }).pipe(Effect.ignoreCause({ log: true }));
 
+  // A renamed key or env var silently does nothing, so name it once at start.
+  const warnLegacyPrismNames = Effect.gen(function* () {
+    const raw = yield* readRaw.pipe(Effect.orElseSucceed((): RawForkConfig => ({})));
+    if (Object.prototype.hasOwnProperty.call(raw, "cliproxy")) {
+      yield* Effect.logWarning(
+        'prism: fork.json key "cliproxy" was renamed to "prism" and is ignored',
+        { path: configPath },
+      );
+    }
+    for (const name of LEGACY_PRISM_ENV_VARS) {
+      if (env[name] === undefined) continue;
+      yield* Effect.logWarning(
+        `prism: environment variable ${name} was renamed to ${name.replace("CLIPROXY", "PRISM")} and is ignored`,
+      );
+    }
+  });
+
   yield* reload;
+  yield* warnLegacyPrismNames;
   yield* startWatcher;
 
   return ForkFlagsService.of({

@@ -60,7 +60,7 @@ Required assets:
 - `checksums.txt`: SHA-256 for every other asset. Verify the tarball against it; this is the integrity check `pinnedRuntime.ts` performs, since GitHub releases carry no registry integrity field.
 - `install.sh`: the manual install path (`curl -fsSL <asset url> | sh`). Run it with `sh -n` for syntax, and read it: it must install the tarball into the launcher layout under `~/.q1code/runtime/versions/<version>` and nothing else.
 - Web bundle archive, if the workflow publishes it separately from the tarball.
-- When the `cliproxy` feature ships: the CLIProxyAPI sidecar bundle per platform, checksummed.
+- When the `prism` feature ships: the Prism engine (CLIProxyAPI) bundle per platform under `dist/prism/`, checksummed.
 
 Confirm the release notes name the upstream tag and SHA the build sits on. Confirm the release is not marked pre-release unless the tag is a nightly-style build.
 
