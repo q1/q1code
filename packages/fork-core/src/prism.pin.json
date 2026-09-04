@@ -1,6 +1,6 @@
 {
-  "version": "7.2.151",
-  "repository": "router-for-me/CLIProxyAPI",
+  "version": "7.2.151-prism.1",
+  "repository": "q1/prism",
   "platforms": {
     "darwin-arm64": "darwin_aarch64",
     "darwin-x64": "darwin_amd64",

@@ -212,9 +212,23 @@ export const make = Effect.fn("prism.binary.make")(function* () {
         });
         const archivePath = path.join(staging, asset);
         yield* fs.writeFile(archivePath, archive);
+        const listing = yield* runner.run({
+          command: "tar",
+          args: ["-tzf", archivePath],
+          cwd: staging,
+          timeout: "2 minutes",
+        });
+        const member = listing.stdout
+          .split("\n")
+          .find((entry) => entry === executableName || entry === `./${executableName}`);
+        if (listing.code !== 0 || member === undefined)
+          return yield* fail(
+            "extract-failed",
+            new Error("Release archive has no root executable."),
+          );
         const extracted = yield* runner.run({
           command: "tar",
-          args: ["-xzf", archivePath, "-C", staging, executableName],
+          args: ["-xzf", archivePath, "-C", staging, member],
           cwd: staging,
           timeout: "2 minutes",
         });
