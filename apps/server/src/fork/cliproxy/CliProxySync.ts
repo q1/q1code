@@ -343,15 +343,13 @@ const make = Effect.gen(function* () {
     const names = yield* fs.readDirectory(authsDir).pipe(Effect.mapError(ioError("read auths")));
     return yield* Effect.forEach(names.filter(isAuthFileName), (name) =>
       fs.stat(path.join(authsDir, name)).pipe(
-        Effect.map(
-          (info): SyncStamp => ({
-            id: name,
-            updatedAt: Option.match(info.mtime, {
-              onNone: () => EPOCH_ISO,
-              onSome: (date) => date.toISOString(),
-            }),
+        Effect.map((info): SyncStamp => ({
+          id: name,
+          updatedAt: Option.match(info.mtime, {
+            onNone: () => EPOCH_ISO,
+            onSome: (date) => date.toISOString(),
           }),
-        ),
+        })),
         Effect.mapError(ioError(`stat ${name}`)),
       ),
     );
