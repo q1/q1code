@@ -74,6 +74,9 @@ export const PrismAccountReport = Schema.Struct({
   provider: Schema.String,
   disabled: Schema.Boolean,
   weight: Schema.optionalKey(Schema.Number),
+  requiresLogin: Schema.optionalKey(Schema.Boolean),
+  expiresAt: Schema.optionalKey(Schema.String),
+  lastRefreshedAt: Schema.optionalKey(Schema.String),
 });
 export type PrismAccountReport = typeof PrismAccountReport.Type;
 
@@ -90,6 +93,9 @@ const AuthFilesResponse = Schema.Struct({
       provider: Schema.optionalKey(Schema.String),
       disabled: Schema.optionalKey(Schema.Boolean),
       weight: Schema.optionalKey(Schema.Number),
+      requires_login: Schema.optionalKey(Schema.Boolean),
+      expires_at: Schema.optionalKey(Schema.String),
+      last_refresh: Schema.optionalKey(Schema.String),
     }),
   ),
 });
@@ -264,6 +270,9 @@ const toAccountReport = (
   provider: entry.provider?.trim() || entry.type?.trim() || "unknown",
   disabled: entry.disabled ?? false,
   ...(entry.weight !== undefined ? { weight: entry.weight } : {}),
+  ...(entry.requires_login !== undefined ? { requiresLogin: entry.requires_login } : {}),
+  ...(entry.expires_at !== undefined ? { expiresAt: entry.expires_at } : {}),
+  ...(entry.last_refresh !== undefined ? { lastRefreshedAt: entry.last_refresh } : {}),
 });
 
 /** Pins the success type of `collectStatus` so `error` reads as optional everywhere. */
@@ -314,13 +323,28 @@ export const formatPrismStatusReport = (report: PrismStatusReport): string =>
 /** Fixed-width columns; `weight` is blank when the gateway did not report one. */
 export const formatPrismAccountsTable = (accounts: ReadonlyArray<PrismAccountReport>): string => {
   if (accounts.length === 0) return "No accounts.";
+  const lifecycle = accounts.some(
+    (account) => account.requiresLogin !== undefined || account.expiresAt !== undefined,
+  );
   const rows = accounts.map((account) => [
     account.id,
     account.provider,
     account.disabled ? "yes" : "no",
     account.weight === undefined ? "" : String(account.weight),
+    ...(lifecycle
+      ? [
+          account.requiresLogin ? "sign-in required" : account.disabled ? "disabled" : "enabled",
+          account.expiresAt ?? "unknown",
+        ]
+      : []),
   ]);
-  const header = ["id", "provider", "disabled", "weight"];
+  const header = [
+    "id",
+    "provider",
+    "disabled",
+    "weight",
+    ...(lifecycle ? ["health", "token expiry"] : []),
+  ];
   const widths = header.map((title, column) =>
     Math.max(title.length, ...rows.map((row) => row[column]?.length ?? 0)),
   );

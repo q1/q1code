@@ -95,6 +95,7 @@ export type PrismAccountUsage = typeof PrismAccountUsage.Type;
 
 /** Optional observations from the gateway; absent timestamps mean unknown. */
 export const PrismAccountLifecycle = Schema.Struct({
+  requiresLogin: Schema.optionalKey(Schema.Boolean),
   status: Schema.optionalKey(Schema.String),
   unavailable: Schema.optionalKey(Schema.Boolean),
   expiresAt: Schema.optionalKey(IsoTimestamp),

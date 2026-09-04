@@ -26,7 +26,15 @@ it("distinguishes renewal, reauthentication, cooldown, and unknown account state
   );
   assert.equal(
     prismAccountHealth(
-      { disabled: false, lifecycle: { status: "error", unavailable: true, lastErrorStatus: 401 } },
+      {
+        disabled: false,
+        lifecycle: {
+          status: "error",
+          unavailable: true,
+          lastErrorStatus: 401,
+          requiresLogin: true,
+        },
+      },
       now,
     ),
     "needs-login",
@@ -76,11 +84,11 @@ it("names assets from the pin and an explicit version", () => {
 it("builds release URLs under the pinned repository tag", () => {
   assert.equal(
     prismReleaseUrl("linux", "arm64", "7.2.147"),
-    "https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.147/CLIProxyAPI_7.2.147_linux_aarch64.tar.gz",
+    "https://github.com/q1/prism/releases/download/v7.2.147/CLIProxyAPI_7.2.147_linux_aarch64.tar.gz",
   );
   assert.equal(
     prismChecksumsUrl("7.2.147"),
-    "https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.147/checksums.txt",
+    "https://github.com/q1/prism/releases/download/v7.2.147/checksums.txt",
   );
   assert.equal(prismReleaseUrl("sunos", "x64"), undefined);
 });
