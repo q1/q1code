@@ -64,6 +64,13 @@ const AuthFileEntry = Schema.Struct({
   weight: Schema.optionalKey(Schema.Number),
   modtime: Schema.optionalKey(Schema.String),
   updated_at: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.String),
+  unavailable: Schema.optionalKey(Schema.Boolean),
+  expires_at: Schema.optionalKey(Schema.String),
+  last_refresh: Schema.optionalKey(Schema.String),
+  next_refresh_after: Schema.optionalKey(Schema.String),
+  next_retry_after: Schema.optionalKey(Schema.String),
+  last_error_status: Schema.optionalKey(Schema.Number),
   // Counters and quota observations (`buildAuthFileEntry` in the sidecar); absent from disk-only listings.
   success: Schema.optionalKey(Schema.Number),
   failed: Schema.optionalKey(Schema.Number),
@@ -245,6 +252,21 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
           Option.getOrUndefined(yield* fileMtime(entry.name)) ??
           DateTime.formatIso(yield* DateTime.now);
         const usage = toUsage(entry);
+        const expiresAt = toIso(entry.expires_at);
+        const lastRefreshedAt = toIso(entry.last_refresh);
+        const refreshNotBefore = toIso(entry.next_refresh_after);
+        const retryAt = toIso(entry.next_retry_after);
+        const lifecycle = {
+          ...(entry.status !== undefined ? { status: entry.status } : {}),
+          ...(entry.unavailable !== undefined ? { unavailable: entry.unavailable } : {}),
+          ...(expiresAt !== undefined ? { expiresAt } : {}),
+          ...(lastRefreshedAt !== undefined ? { lastRefreshedAt } : {}),
+          ...(refreshNotBefore !== undefined ? { refreshNotBefore } : {}),
+          ...(retryAt !== undefined ? { retryAt } : {}),
+          ...(entry.last_error_status !== undefined
+            ? { lastErrorStatus: entry.last_error_status }
+            : {}),
+        };
         return {
           id: entry.name,
           provider,
@@ -254,6 +276,7 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
           ...(entry.weight !== undefined ? { weight: entry.weight } : {}),
           updatedAt,
           ...(usage !== undefined ? { usage } : {}),
+          ...(Object.keys(lifecycle).length > 0 ? { lifecycle } : {}),
         } satisfies PrismAccount;
       });
 
