@@ -20,6 +20,7 @@ import {
   patchPrismAccount,
   restartPrism,
   setPrismRouting,
+  setPrismUsageSource,
   startPrismLogin,
 } from "@t3tools/client-runtime/fork";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
@@ -74,6 +75,8 @@ export function bindPrismCalls(prepared: PrismClientInput["prepared"]) {
     getRouting: () => run(getPrismRouting),
     setRouting: (strategy: PrismRoutingStrategy) =>
       run((input) => setPrismRouting({ ...input, strategy })),
+    setUsageSource: (enabled: boolean) =>
+      run((input) => setPrismUsageSource({ ...input, enabled })),
   };
 }
 
