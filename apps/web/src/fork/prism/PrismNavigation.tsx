@@ -2,24 +2,33 @@ import { useNavigate } from "@tanstack/react-router";
 import { WaypointsIcon } from "lucide-react";
 import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "~/components/ui/sidebar";
 import { useForkFlag } from "../useForkFlag";
+import { MicIdentityNavigation } from "../mic-identity/MicIdentityNavigation";
+import { readMicIdentityBuildConfig } from "../mic-identity/publicConfig";
 
 export function PrismNavigation() {
   const enabled = useForkFlag("prism");
+  const serverIdentity = useForkFlag("mic-identity");
+  const identity = serverIdentity || readMicIdentityBuildConfig()._tag !== "disabled";
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
-  if (!enabled) return null;
+  if (!enabled && !identity) return null;
   return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
-        tooltip="Prism"
-        onClick={() => {
-          if (isMobile) setOpenMobile(false);
-          void navigate({ to: "/prism" });
-        }}
-      >
-        <WaypointsIcon />
-        <span>Prism</span>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
+    <>
+      {identity ? <MicIdentityNavigation /> : null}
+      {enabled || identity ? (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            tooltip="Prism"
+            onClick={() => {
+              if (isMobile) setOpenMobile(false);
+              void navigate({ to: "/prism" });
+            }}
+          >
+            <WaypointsIcon />
+            <span>Prism</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      ) : null}
+    </>
   );
 }

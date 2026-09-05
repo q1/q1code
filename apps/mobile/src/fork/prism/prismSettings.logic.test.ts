@@ -31,7 +31,7 @@ const environment = (id: string, phase: string) => ({
 });
 
 describe("selectPrismEnvironments", () => {
-  it("keeps only connected environments whose flag is on", () => {
+  it("keeps known Prism environments visible through reconnection", () => {
     const flags: Record<string, boolean | undefined> = { a: true, b: false, c: true, d: true };
     const selected = selectPrismEnvironments(
       [
@@ -43,7 +43,7 @@ describe("selectPrismEnvironments", () => {
       ],
       (id) => (flags[id] === undefined ? null : { forkFlags: { prism: flags[id] } }),
     );
-    expect(selected.map((entry) => entry.environmentId)).toEqual(["a", "d"]);
+    expect(selected.map((entry) => entry.environmentId)).toEqual(["a", "c", "d"]);
     expect(selected[0]?.label).toBe("env a");
   });
 

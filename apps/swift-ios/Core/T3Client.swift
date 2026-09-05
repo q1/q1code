@@ -180,8 +180,12 @@ public actor T3Client {
         return config
     }
 
-    public func prism(_ input: PrismRequest) async throws -> PrismResponse {
-        try await api.prism(input, environment: environment)
+    public func prismIdentityConfiguration() async throws -> MicPrismIdentityConfiguration {
+        try await api.prismIdentityConfiguration(environment: environment)
+    }
+
+    public func prism(_ input: PrismRequest, micScToken: MicPrismTokenSource? = nil) async throws -> PrismResponse {
+        try await api.prism(input, environment: environment, micScToken: micScToken)
     }
 
     public func usageSummary(_ input: UsageSummaryInput) async throws -> UsageSummary {

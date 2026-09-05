@@ -7,9 +7,14 @@ import type {
   PrismUnavailableReason,
 } from "@q1code/core/prismApi";
 import { PrismRoutingStrategy, FORK_CONFIG_FILENAME } from "@q1code/core/config";
-import { readForkFlag } from "@t3tools/client-runtime/fork";
+import {
+  INITIAL_PRISM_HEALTH,
+  readForkFlag,
+  reducePrismHealth,
+  resolvePrismAccess,
+} from "@t3tools/client-runtime/fork";
 import { AlertCircleIcon, RefreshCwIcon } from "lucide-react";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
@@ -27,7 +32,10 @@ import {
 } from "~/components/settings/settingsLayout";
 import { searchableSetting } from "~/components/settings/settingsSearch";
 import { ensureLocalApi } from "~/localApi";
-import { usePrimaryEnvironmentId } from "~/state/environments";
+import { usePrimarySessionState } from "~/environments/primary";
+import { usePrimaryEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
+import { MicIdentityPanel } from "../mic-identity/MicIdentityPanel";
+import { readMicIdentityBuildConfig } from "../mic-identity/publicConfig";
 import { primaryServerConfigAtom } from "~/state/server";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
@@ -92,6 +100,7 @@ type SyncView =
 export function PrismSettingsPanel() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const config = useAtomValue(primaryServerConfigAtom);
+  if (readMicIdentityBuildConfig()._tag !== "disabled") return <MicIdentityPanel />;
   if (primaryEnvironmentId === null) {
     return (
       <PrismNotice
@@ -108,6 +117,7 @@ export function PrismSettingsPanel() {
       />
     );
   }
+  if (readForkFlag(config.environment.capabilities, "mic-identity")) return <MicIdentityPanel />;
   if (!readForkFlag(config.environment.capabilities, "prism")) {
     return (
       <PrismNotice
@@ -116,7 +126,7 @@ export function PrismSettingsPanel() {
       />
     );
   }
-  return <PrismSettingsPanelBody />;
+  return <PrismSettingsPanelBody key={primaryEnvironmentId} />;
 }
 
 function PrismNotice({
@@ -138,12 +148,22 @@ function PrismNotice({
 function PrismSettingsPanelBody() {
   const api = usePrismApi();
   const visible = useDocumentVisible();
+  const environment = usePrimaryEnvironment();
+  const connected = api !== null && environment?.connection.phase === "connected";
 
-  const [statusView, setStatusView] = useState<{
-    readonly status: PrismStatus;
-    readonly receivedAt: number;
-  } | null>(null);
-  const [statusError, setStatusError] = useState<string | null>(null);
+  const session = usePrimarySessionState();
+  const [health, dispatchHealth] = useReducer(reducePrismHealth, INITIAL_PRISM_HEALTH);
+  const access = resolvePrismAccess({
+    health,
+    connected,
+    session: session.data,
+    sessionError: session.error !== null,
+  });
+  // Confirmation dialogs may remain open across a failed health check or permission change.
+  const accessRef = useRef(access);
+  useLayoutEffect(() => {
+    accessRef.current = access;
+  }, [access]);
   const [sync, setSync] = useState<SyncView>({ _tag: "idle" });
   const [restart, setRestart] = useState<{ readonly startedAt: number } | null>(null);
 
@@ -188,6 +208,12 @@ function PrismSettingsPanelBody() {
       if (status.state !== "ready") {
         dataLoadedRef.current = false;
         setData({ _tag: "unavailable", reason: "sidecar-not-ready", state: status.state });
+      } else if (status.capabilities?.accountDetails === false) {
+        dataLoadedRef.current = false;
+        setData({
+          _tag: "forbidden",
+          message: "Your account can use Prism without access to pooled account details.",
+        });
       } else if (!dataLoadedRef.current) {
         void loadData();
       }
@@ -210,26 +236,31 @@ function PrismSettingsPanelBody() {
     if (!visible || api === null) return;
     let cancelled = false;
     const tick = async () => {
-      const [statusResult, syncResult] = await Promise.all([api.status(), api.syncStatus()]);
+      const statusResult = await api.status();
       if (cancelled) return;
-      if (syncResult._tag === "ok") {
+      if (statusResult._tag === "error") {
+        dispatchHealth({ type: "failed", error: describePrismCallError(statusResult.error) });
+        return;
+      }
+      dispatchHealth({ type: "received", status: statusResult.value, receivedAt: Date.now() });
+      applyStatus(statusResult.value);
+      const syncResult =
+        statusResult.value.capabilities?.accountDetails !== false ? await api.syncStatus() : null;
+      if (cancelled) return;
+      if (syncResult?._tag === "ok") {
         setSync({ _tag: "ready", value: syncResult.value });
-      } else if (syncResult.error._tag === "PrismUnavailableError") {
+      } else if (
+        syncResult?._tag === "error" &&
+        syncResult.error._tag === "PrismUnavailableError"
+      ) {
         setSync({
           _tag: "unavailable",
           reason: syncResult.error.reason,
           state: syncResult.error.state,
         });
-      } else {
+      } else if (syncResult?._tag === "error") {
         setSync({ _tag: "error", message: describePrismCallError(syncResult.error) });
       }
-      if (statusResult._tag === "error") {
-        setStatusError(describePrismCallError(statusResult.error));
-        return;
-      }
-      setStatusError(null);
-      setStatusView({ status: statusResult.value, receivedAt: Date.now() });
-      applyStatus(statusResult.value);
     };
     void tick();
     const interval = window.setInterval(
@@ -244,11 +275,12 @@ function PrismSettingsPanelBody() {
   }, [visible, api, applyStatus, restarting]);
 
   const restartProxy = async () => {
-    if (api === null || restarting || statusView === null) return;
+    if (api === null || restarting || health.status === null || !accessRef.current.configure)
+      return;
     const confirmed = await ensureLocalApi().dialogs.confirm(
-      describePrismRestart(resolvePrismMode(statusView.status)),
+      describePrismRestart(resolvePrismMode(health.status)),
     );
-    if (!confirmed) return;
+    if (!confirmed || !accessRef.current.configure) return;
     setRestart({ startedAt: Date.now() });
     const result = await api.restart();
     if (result._tag === "error") {
@@ -256,7 +288,7 @@ function PrismSettingsPanelBody() {
       reportPrismError("Could not restart the proxy", result.error);
       return;
     }
-    setStatusView({ status: result.value, receivedAt: Date.now() });
+    dispatchHealth({ type: "received", status: result.value, receivedAt: Date.now() });
     applyStatus(result.value);
   };
 
@@ -293,7 +325,7 @@ function PrismSettingsPanelBody() {
     patch: Parameters<PrismApi["patchAccount"]>[1],
     failureTitle: string,
   ) => {
-    if (api === null) return;
+    if (api === null || !accessRef.current.accounts) return;
     dispatchAccounts({ type: "patchStarted", id: account.id, patch });
     const result = await api.patchAccount(account.id, patch);
     if (result._tag === "error") {
@@ -305,12 +337,12 @@ function PrismSettingsPanelBody() {
   };
 
   const deleteAccount = async (account: PrismAccount) => {
-    if (api === null) return;
+    if (api === null || !accessRef.current.accounts) return;
     const confirmed = await ensureLocalApi().dialogs.confirm(
       `Remove ${describePrismAccount(account)} from Prism? Its auth file is deleted on the server; sign in again to add it back.`,
       { variant: "destructive" },
     );
-    if (!confirmed) return;
+    if (!confirmed || !accessRef.current.accounts) return;
     dispatchAccounts({ type: "deleteStarted", id: account.id });
     const result = await api.deleteAccount(account.id);
     if (result._tag === "error") {
@@ -325,7 +357,7 @@ function PrismSettingsPanelBody() {
   // answers; a failure drops it, so the switch falls back to the last status.
   const [usageSourceRequest, setUsageSourceRequest] = useState<boolean | null>(null);
   const changeUsageSource = async (enabled: boolean) => {
-    if (api === null || usageSourceRequest !== null) return;
+    if (api === null || usageSourceRequest !== null || !accessRef.current.configure) return;
     setUsageSourceRequest(enabled);
     const result = await api.setUsageSource(enabled);
     setUsageSourceRequest(null);
@@ -336,12 +368,12 @@ function PrismSettingsPanelBody() {
       );
       return;
     }
-    setStatusView({ status: result.value, receivedAt: Date.now() });
+    dispatchHealth({ type: "received", status: result.value, receivedAt: Date.now() });
   };
 
   const [routingBusy, setRoutingBusy] = useState(false);
   const changeRouting = async (strategy: PrismRoutingStrategy) => {
-    if (api === null) return;
+    if (api === null || !accessRef.current.routing || routingBusy) return;
     setRoutingBusy(true);
     const result = await api.setRouting(strategy);
     setRoutingBusy(false);
@@ -354,149 +386,159 @@ function PrismSettingsPanelBody() {
     );
   };
 
-  const writable = data._tag === "ready";
-  const accountWritable = writable && statusView?.status.role !== "replica";
+  const accountWritable = data._tag === "ready" && access.accounts;
+  const routing = data._tag === "ready" ? data.routing : null;
   const showList = data._tag === "idle" || data._tag === "ready";
 
   return (
     <SettingsPageContainer>
       <PrismStatusSection
-        status={statusView?.status ?? null}
-        receivedAt={statusView?.receivedAt ?? 0}
-        statusError={statusError}
-        canRestart={api !== null}
+        status={health.status}
+        receivedAt={health.receivedAt}
+        statusError={health.error ?? (!connected ? "The environment is disconnected." : null)}
+        canRestart={access.configure}
         restarting={restarting}
         onRestart={() => void restartProxy()}
         usageSource={
           usageSourceRequest ??
-          (statusView === null ? null : resolvePrismUsageSource(statusView.status))
+          (health.status === null ? null : resolvePrismUsageSource(health.status))
         }
         usageSourcePending={usageSourceRequest !== null}
+        canConfigure={access.configure}
         onUsageSourceChange={(enabled) => void changeUsageSource(enabled)}
       />
 
-      <SettingsSection
-        {...searchableSetting("prism-accounts")}
-        headerAction={
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            aria-label="Refresh accounts"
-            disabled={api === null || loading || !showList}
-            onClick={() => {
-              dataLoadedRef.current = false;
-              void loadData();
-            }}
+      {access.accountDetails ? (
+        <>
+          <SettingsSection
+            {...searchableSetting("prism-accounts")}
+            headerAction={
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                aria-label="Refresh accounts"
+                disabled={api === null || loading || !showList}
+                onClick={() => {
+                  dataLoadedRef.current = false;
+                  void loadData();
+                }}
+              >
+                <RefreshCwIcon className="size-3" />
+                Refresh
+              </Button>
+            }
           >
-            <RefreshCwIcon className="size-3" />
-            Refresh
-          </Button>
-        }
-      >
-        {data._tag === "unavailable" ? (
-          <SettingsRow
-            title="Unavailable"
-            description={describePrismUnavailable(data.reason, data.state)}
-          />
-        ) : data._tag === "forbidden" ? (
-          <SettingsRow title="Administrative access" description={data.message} />
-        ) : (
-          <>
-            {loadError ? (
-              <Alert variant="error" className="mx-3 mb-2 sm:mx-4">
-                <AlertCircleIcon />
-                <AlertTitle>Could not load accounts</AlertTitle>
-                <AlertDescription>{loadError}</AlertDescription>
-                <AlertAction>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={loading}
-                    onClick={() => {
-                      dataLoadedRef.current = false;
-                      void loadData();
-                    }}
-                  >
-                    {loading ? "Retrying…" : "Retry"}
-                  </Button>
-                </AlertAction>
-              </Alert>
-            ) : null}
-            {accounts.accounts === null ? (
-              loadError ? null : (
-                <PrismAccountsSkeleton />
-              )
-            ) : accounts.accounts.length === 0 ? (
-              <PrismAccountsEmpty />
-            ) : (
+            {data._tag === "unavailable" ? (
               <SettingsRow
-                title="Pool"
-                description={`${accounts.accounts.length} account${accounts.accounts.length === 1 ? "" : "s"}. Disabled accounts stay on disk but take no requests; weight only matters for weighted round robin.`}
-              >
-                <PrismAccountsTable
-                  readOnly={!accountWritable}
-                  state={accounts}
-                  accounts={accounts.accounts}
-                  highlightedAccountId={highlightedAccountId}
-                  onToggle={(account, enabled) =>
-                    void patchAccount(
-                      account,
-                      { disabled: !enabled },
-                      enabled ? "Could not enable account" : "Could not disable account",
-                    )
-                  }
-                  onWeight={(account, weight) =>
-                    void patchAccount(account, { weight }, "Could not change weight")
-                  }
-                  onDelete={(account) => void deleteAccount(account)}
-                />
-              </SettingsRow>
+                title="Unavailable"
+                description={describePrismUnavailable(data.reason, data.state)}
+              />
+            ) : data._tag === "forbidden" ? (
+              <SettingsRow title="Administrative access" description={data.message} />
+            ) : (
+              <>
+                {loadError ? (
+                  <Alert variant="error" className="mx-3 mb-2 sm:mx-4">
+                    <AlertCircleIcon />
+                    <AlertTitle>Could not load accounts</AlertTitle>
+                    <AlertDescription>{loadError}</AlertDescription>
+                    <AlertAction>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        disabled={loading}
+                        onClick={() => {
+                          dataLoadedRef.current = false;
+                          void loadData();
+                        }}
+                      >
+                        {loading ? "Retrying…" : "Retry"}
+                      </Button>
+                    </AlertAction>
+                  </Alert>
+                ) : null}
+                {accounts.accounts === null ? (
+                  loadError ? null : (
+                    <PrismAccountsSkeleton />
+                  )
+                ) : accounts.accounts.length === 0 ? (
+                  <PrismAccountsEmpty />
+                ) : (
+                  <SettingsRow
+                    title="Pool"
+                    description={`${accounts.accounts.length} account${accounts.accounts.length === 1 ? "" : "s"}. Disabled accounts stay on disk but take no requests; weight only matters for weighted round robin.`}
+                  >
+                    <PrismAccountsTable
+                      readOnly={!accountWritable}
+                      state={accounts}
+                      accounts={accounts.accounts}
+                      highlightedAccountId={highlightedAccountId}
+                      onToggle={(account, enabled) =>
+                        void patchAccount(
+                          account,
+                          { disabled: !enabled },
+                          enabled ? "Could not enable account" : "Could not disable account",
+                        )
+                      }
+                      onWeight={(account, weight) =>
+                        void patchAccount(account, { weight }, "Could not change weight")
+                      }
+                      onDelete={(account) => void deleteAccount(account)}
+                    />
+                  </SettingsRow>
+                )}
+              </>
             )}
-          </>
-        )}
-      </SettingsSection>
+          </SettingsSection>
 
-      <PrismAddAccountSection
-        api={api}
-        writable={accountWritable}
-        onCompleted={handleLoginCompleted}
-      />
+          <PrismAddAccountSection
+            api={api}
+            writable={accountWritable}
+            onCompleted={handleLoginCompleted}
+          />
 
-      <SettingsSection {...searchableSetting("prism-routing-strategy")}>
-        <SettingsRow
-          title="Strategy"
-          description={`How the proxy picks an account per request. Applies immediately and is saved as prism.routingStrategy in ${FORK_CONFIG_FILENAME}.`}
-          control={
-            <Select
-              value={writable ? data.routing : null}
-              onValueChange={(value) => {
-                if (value === null) return;
-                void changeRouting(value as PrismRoutingStrategy);
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                className="w-full sm:w-48"
-                aria-label="Routing strategy"
-                disabled={!writable || data.routing === null || routingBusy}
-              >
-                <SelectValue>
-                  {writable && data.routing ? ROUTING_LABELS[data.routing] : "Unknown"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {PrismRoutingStrategy.literals.map((strategy) => (
-                  <SelectItem key={strategy} hideIndicator value={strategy}>
-                    {ROUTING_LABELS[strategy]}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-      </SettingsSection>
+          <SettingsSection {...searchableSetting("prism-routing-strategy")}>
+            <SettingsRow
+              title="Strategy"
+              description={`How the proxy picks an account per request. Applies immediately and is saved as prism.routingStrategy in ${FORK_CONFIG_FILENAME}.`}
+              control={
+                <Select
+                  value={routing}
+                  onValueChange={(value) => {
+                    if (value === null) return;
+                    void changeRouting(value as PrismRoutingStrategy);
+                  }}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="w-full sm:w-48"
+                    aria-label="Routing strategy"
+                    disabled={!access.routing || routing === null || routingBusy}
+                  >
+                    <SelectValue>{routing ? ROUTING_LABELS[routing] : "Unknown"}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    {PrismRoutingStrategy.literals.map((strategy) => (
+                      <SelectItem key={strategy} hideIndicator value={strategy}>
+                        {ROUTING_LABELS[strategy]}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          </SettingsSection>
 
-      <PrismSyncSection sync={sync} />
+          <PrismSyncSection sync={sync} />
+        </>
+      ) : health.status ? (
+        <SettingsSection title="Prism access">
+          <SettingsRow
+            title={access.inference ? "Ready for inference" : "Inference unavailable"}
+            description="Pooled account details and management require administrative access."
+          />
+        </SettingsSection>
+      ) : null}
     </SettingsPageContainer>
   );
 }

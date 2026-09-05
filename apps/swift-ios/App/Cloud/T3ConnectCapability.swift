@@ -157,6 +157,21 @@ public final class T3ConnectController: T3ConnectDeviceManaging {
 
     var clerk: Clerk? { auth?.client }
 
+    /// mic.sc credentials never substitute for a relay or environment credential.
+    func micPrismToken(expectedPublishableKey: String) async throws -> String {
+        guard resolution.configuration?.clerkPublishableKey == expectedPublishableKey,
+              !isLocalAuthorizationInvalidated, !isSignOutInProgress,
+              let clerk, let session = clerk.session else {
+            throw FeatureCapabilityUnavailable("Sign in with the configured mic.sc account service")
+        }
+        let token = try await session.getToken(.init(template: "convex", skipCache: true))
+        guard clerk.session?.id == session.id, !isLocalAuthorizationInvalidated,
+              !isSignOutInProgress, let token, !token.isEmpty else {
+            throw FeatureCapabilityUnavailable("mic.sc sign-in")
+        }
+        return token
+    }
+
     public func refresh() async {
         guard let auth, let relay else { return }
         guard !isLocalAuthorizationInvalidated else { return }

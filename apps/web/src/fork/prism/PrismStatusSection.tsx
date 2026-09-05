@@ -25,6 +25,7 @@ export function PrismStatusSection({
   onRestart,
   usageSource,
   usageSourcePending,
+  canConfigure,
   onUsageSourceChange,
 }: {
   readonly status: PrismStatus | null;
@@ -37,6 +38,7 @@ export function PrismStatusSection({
   /** The Limits-view publication toggle as it should show right now (optimistic while a change is in flight); `null` until known. */
   readonly usageSource: boolean | null;
   readonly usageSourcePending: boolean;
+  readonly canConfigure: boolean;
   readonly onUsageSourceChange: (enabled: boolean) => void;
 }) {
   const mode = status === null ? null : resolvePrismMode(status);
@@ -47,14 +49,17 @@ export function PrismStatusSection({
         description="Prism is the account proxy on the primary environment. Claude and Codex instances that route through it share one pool of accounts."
         status={
           statusError ? (
-            <span className="text-destructive">{statusError}</span>
+            <span className="text-destructive">
+              Offline — {status ? `last known state: ${status.state}. ` : ""}
+              {statusError}
+            </span>
           ) : status ? (
             summarizePrismStatus(status, receivedAt)
           ) : (
             "Checking the proxy…"
           )
         }
-        control={status ? <PrismStateBadge state={status.state} /> : null}
+        control={status && !statusError ? <PrismStateBadge state={status.state} /> : null}
       />
       <SettingsRow
         title="Mode"
@@ -94,45 +99,50 @@ export function PrismStatusSection({
           }
         />
       ) : null}
-      <SettingsRow
-        {...searchableSetting("prism-usage-source")}
-        title="Show pooled accounts on Usage → Limits"
-        description={
-          <>
-            The accounts in the pool appear on the Limits view labelled Prism, beside the accounts
-            your providers report. Saved as prism.usageSource in {FORK_CONFIG_FILENAME}.{" "}
-            <Link to="/usage" className="text-foreground underline underline-offset-2">
-              Open Usage
-            </Link>
-          </>
-        }
-        control={
-          <Switch
-            checked={usageSource ?? true}
-            disabled={usageSource === null || usageSourcePending}
-            onCheckedChange={(checked) => onUsageSourceChange(Boolean(checked))}
-            aria-label="Show pooled accounts on Usage → Limits"
+      {status?.capabilities?.manage !== false ? (
+        <>
+          <SettingsRow
+            {...searchableSetting("prism-usage-source")}
+            title="Show pooled accounts on Usage → Limits"
+            description={
+              <>
+                The accounts in the pool appear on the Limits view labelled Prism, beside the
+                accounts your providers report. Saved as prism.usageSource in {FORK_CONFIG_FILENAME}
+                .{" "}
+                <Link to="/usage" className="text-foreground underline underline-offset-2">
+                  Open Usage
+                </Link>
+              </>
+            }
+            control={
+              <Switch
+                checked={usageSource ?? true}
+                disabled={!canConfigure || usageSource === null || usageSourcePending}
+                onCheckedChange={(checked) => onUsageSourceChange(Boolean(checked))}
+                aria-label="Show pooled accounts on Usage → Limits"
+              />
+            }
           />
-        }
-      />
-      <SettingsRow
-        {...searchableSetting("prism-restart")}
-        description={
-          mode === "external"
-            ? "Probes the external proxy again and reloads accounts once it answers."
-            : "Stops the sidecar and starts it again. Requests routed through Prism fail until it is ready."
-        }
-        control={
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!canRestart || restarting || status === null}
-            onClick={onRestart}
-          >
-            {restarting ? "Restarting…" : "Restart"}
-          </Button>
-        }
-      />
+          <SettingsRow
+            {...searchableSetting("prism-restart")}
+            description={
+              mode === "external"
+                ? "Probes the external proxy again and reloads accounts once it answers."
+                : "Stops the sidecar and starts it again. Requests routed through Prism fail until it is ready."
+            }
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!canRestart || restarting || status === null}
+                onClick={onRestart}
+              >
+                {restarting ? "Restarting…" : "Restart"}
+              </Button>
+            }
+          />
+        </>
+      ) : null}
     </SettingsSection>
   );
 }
