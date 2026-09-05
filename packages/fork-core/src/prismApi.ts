@@ -16,6 +16,12 @@ import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 
 import { PrismMode, PrismRoutingStrategy } from "./config.ts";
+import {
+  MicIdentityForbiddenError,
+  MicIdentityUnauthorizedError,
+  MicIdentityUnavailableError,
+} from "./micIdentity.ts";
+import { MicIdentityAccess, MicIdentityPublicConfig } from "./micIdentityApi.ts";
 
 export const PRISM_API_PREFIX = "/api/fork/prism";
 
@@ -28,6 +34,8 @@ export const PRISM_USAGE_SOURCE_ID = "prism";
 export const PRISM_USAGE_SOURCE_LABEL = "Prism";
 
 export const PRISM_API_PATHS = {
+  identityConfig: `${PRISM_API_PREFIX}/identity/config`,
+  identityAccess: `${PRISM_API_PREFIX}/identity/access`,
   status: `${PRISM_API_PREFIX}/status`,
   restart: `${PRISM_API_PREFIX}/restart`,
   usageSource: `${PRISM_API_PREFIX}/usage-source`,
@@ -54,6 +62,14 @@ const IsoTimestamp = Schema.String;
 
 export const PrismStatus = Schema.Struct({
   state: PrismState,
+  /** Request-specific permissions; older servers rely on environment session scopes. */
+  capabilities: Schema.optionalKey(
+    Schema.Struct({
+      inference: Schema.Boolean,
+      manage: Schema.Boolean,
+      accountDetails: Schema.Boolean,
+    }),
+  ),
   port: Schema.Number,
   version: Schema.optionalKey(Schema.String),
   role: PrismRole,
@@ -347,16 +363,36 @@ export class PrismSyncFailedError extends Schema.TaggedErrorClass<PrismSyncFaile
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
   dpop: Schema.optionalKey(Schema.String),
+  "x-mic-sc-session": Schema.optionalKey(Schema.String),
 });
 
 const SessionParams = Schema.Struct({ sessionId: Schema.String });
 const AccountParams = Schema.Struct({ id: PrismAccountId });
 
-const ScopeErrors = [EnvironmentScopeRequiredError] as const;
+const ScopeErrors = [
+  EnvironmentScopeRequiredError,
+  MicIdentityForbiddenError,
+  MicIdentityUnauthorizedError,
+  MicIdentityUnavailableError,
+] as const;
 const ProxyErrors = [...ScopeErrors, PrismUnavailableError, PrismUpstreamError] as const;
 const SyncErrors = [...ScopeErrors, PrismUnavailableError, PrismSyncFailedError] as const;
 
 export class PrismHttpApiGroup extends HttpApiGroup.make("prism")
+  .add(
+    HttpApiEndpoint.get("identityConfig", PRISM_API_PATHS.identityConfig, {
+      headers: OptionalBearerHeaders,
+      success: MicIdentityPublicConfig,
+      error: ScopeErrors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get("identityAccess", PRISM_API_PATHS.identityAccess, {
+      headers: OptionalBearerHeaders,
+      success: MicIdentityAccess,
+      error: ScopeErrors,
+    }),
+  )
   .add(
     HttpApiEndpoint.get("status", PRISM_API_PATHS.status, {
       headers: OptionalBearerHeaders,
