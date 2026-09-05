@@ -7,6 +7,11 @@
  * under the userdata directory, then the registry default.
  */
 export const FORK_FLAGS = {
+  "mic-identity": {
+    description: "Use mic.sc identity and permissions for the paired Prism service",
+    scope: "both",
+    default: false,
+  },
   "update-check": {
     description: "Poll q1/q1code GitHub Releases daily and surface a newer version to clients",
     scope: "server",

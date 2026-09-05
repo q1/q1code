@@ -93,9 +93,17 @@ export const PrismConfig = Schema.Struct({
 });
 export type PrismConfig = typeof PrismConfig.Type;
 
+/** Public identity configuration. Credentials remain in the signed-in client session. */
+export const MicIdentityConfig = Schema.Struct({
+  authorityUrl: Schema.String,
+  clerkPublishableKey: Schema.String,
+});
+export type MicIdentityConfig = typeof MicIdentityConfig.Type;
+
 export const ForkConfig = Schema.Struct({
   flags: Schema.optionalKey(ForkFlagOverrides),
   prism: Schema.optionalKey(PrismConfig),
+  "mic-identity": Schema.optionalKey(MicIdentityConfig),
 });
 export type ForkConfig = typeof ForkConfig.Type;
 
