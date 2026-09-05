@@ -3,7 +3,7 @@ import { AuthView } from "@clerk/expo/native";
 import type { MicIdentityAccess, MicIdentityPublicConfig } from "@q1code/core/micIdentityApi";
 import type { PrismRoutingStrategy } from "@q1code/core/config";
 import {
-  getMicIdentityAccess,
+  getMicIdentityOverview,
   getMicPrismStatus,
   getMicPrismRouting,
   setMicPrismRouting,
@@ -33,11 +33,12 @@ import {
   MicPrismRootPresentContext,
   MicPrismThreadBridgeContext,
 } from "./PersistentMicPrismIdentity";
+import { MicPrismPairingSection } from "./MicPrismPairingSection";
 import { MicPrismThreadSection } from "./MicPrismThreadSection";
 import { MicPrismInferenceSection } from "./MicPrismInferenceSection";
 import { MicPrismTokenContext } from "./micIdentityContext";
 import { describePrismError, PRISM_ROUTING_OPTIONS } from "./prismSettings.logic";
-import { usePrismApi } from "./usePrismApi";
+import { type PrismApi, usePrismApi } from "./usePrismApi";
 
 const micTokenCache = {
   getToken: (key: string) => SecureStore.getItemAsync(`q1code.mic-sc.${key}`),
@@ -59,25 +60,38 @@ function ConfiguredBoundary(props: Parameters<typeof PrismIdentityBoundary>[0]) 
   const persistent = useContext(MicPrismThreadBridgeContext);
   const rootPresent = useContext(MicPrismRootPresentContext);
   const api = usePrismApi(props.environmentId);
-  const [config, setConfig] = useState<MicIdentityPublicConfig | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState<{
+    readonly api: PrismApi;
+    readonly config: MicIdentityPublicConfig | null;
+    readonly error: string | null;
+  } | null>(null);
+  const current = api !== null && loaded?.api === api ? loaded : null;
+  const config = current?.config;
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
     void api.identityConfig().then((result) => {
       if (cancelled) return;
-      if (result._tag === "ok") {
-        setConfig(result.value);
-        setError(null);
-      } else setError(describePrismError(result.error));
+      setLoaded({
+        api,
+        config: result._tag === "ok" ? result.value : null,
+        error: result._tag === "ok" ? null : describePrismError(result.error),
+      });
     });
     return () => {
       cancelled = true;
     };
   }, [api]);
 
-  if (config === null) {
-    return <IdentityNotice message={error ?? "Loading mic.sc sign-in…"} />;
+  if (!config) {
+    return (
+      <IdentityNotice
+        message={
+          current?.error ??
+          (api ? "Loading mic.sc sign-in…" : "Connect this environment to load mic.sc sign-in.")
+        }
+      />
+    );
   }
   const cloud = resolveCloudPublicConfig();
   const mode = persistent
@@ -199,16 +213,20 @@ function SignedIdentity(props: {
         </View>
       </Modal>
       {isSignedIn && !locallySignedOut ? (
-        <MicPrismThreadSection environmentId={props.environmentId} />
-      ) : null}
-      {isSignedIn && !locallySignedOut ? (
-        <MicService key={identityKey} config={props.config} source={source} isCurrent={isCurrent} />
+        <MicService
+          key={identityKey}
+          environmentId={props.environmentId}
+          config={props.config}
+          source={source}
+          isCurrent={isCurrent}
+        />
       ) : null}
     </MicPrismTokenContext.Provider>
   );
 }
 
 function MicService(props: {
+  readonly environmentId: EnvironmentId;
   readonly config: MicIdentityPublicConfig;
   readonly source: ReturnType<typeof freshMicMobileToken>;
   readonly isCurrent: () => boolean;
@@ -278,7 +296,7 @@ function MicService(props: {
       }
     };
     try {
-      const result = await runtime.runPromise(getMicIdentityAccess(input).pipe(Effect.result));
+      const result = await runtime.runPromise(getMicIdentityOverview(input).pipe(Effect.result));
       if (!current()) return;
       if (result._tag === "Failure") {
         fail(result.failure);
@@ -287,22 +305,26 @@ function MicService(props: {
         return;
       }
       setAccess(result.success);
-      const status = await runtime.runPromise(getMicPrismStatus(input).pipe(Effect.result));
-      if (!current()) return;
-      if (status._tag === "Failure") {
-        fail(status.failure);
-        setRefreshing(false);
-        setError(describePrismError(status.failure));
-        return;
-      }
-      setGateway(status.success);
+      setGateway(null);
+      setStrategy(null);
       setError(null);
+      const service = result.success.discovery.service;
+      if (!service) return;
+      const bound = { ...input, expectedService: service };
+      if (result.success.session.permissions.includes("prism:inference")) {
+        const status = await runtime.runPromise(getMicPrismStatus(bound).pipe(Effect.result));
+        if (!current()) return;
+        if (status._tag === "Failure") {
+          setError(describePrismError(status.failure));
+          return;
+        }
+        setGateway(status.success);
+      }
       if (result.success.session.permissions.includes("prism:routing:read")) {
-        const routing = await runtime.runPromise(getMicPrismRouting(input).pipe(Effect.result));
+        const routing = await runtime.runPromise(getMicPrismRouting(bound).pipe(Effect.result));
         if (!current()) return;
         if (routing._tag === "Success") setStrategy(routing.success.strategy);
         else {
-          fail(routing.failure);
           setError(describePrismError(routing.failure));
         }
       } else setStrategy(null);
@@ -328,7 +350,7 @@ function MicService(props: {
   const canRoute =
     error === null &&
     !refreshing &&
-    gateway !== null &&
+    strategy !== null &&
     access !== null &&
     access.session.permissions.includes("prism:routing:write");
   useEffect(() => {
@@ -411,7 +433,16 @@ function MicService(props: {
           ) : null}
         </View>
       </SettingsSection>
-      {access && gateway ? (
+      <MicPrismThreadSection
+        environmentId={props.environmentId}
+        canInfer={
+          error === null && access?.session.permissions.includes("prism:inference") === true
+        }
+      />
+      {access ? (
+        <MicPrismPairingSection input={input} access={access} onChanged={() => void refresh()} />
+      ) : null}
+      {access?.session.permissions.includes("prism:inference") && gateway ? (
         <MicPrismInferenceSection
           key={`${serviceId}:${servicePairingRevision}:${serviceApiUrl}:${serviceInferenceUrl}`}
           input={boundInput}

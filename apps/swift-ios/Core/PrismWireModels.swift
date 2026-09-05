@@ -41,6 +41,10 @@ public struct PrismResponse: Decodable, Sendable {
     public let discovery: MicPrismDiscovery?
     public let models: [String]?
     public let response: String?
+    public let pairingChallenge: MicPrismPairingChallenge?
+    public let serviceInstanceId: String?
+    public let pairingRevision: Int?
+    public let selectionRevision: Int?
     public let threadId: String?
     public let expiresAt: Double?
 }
@@ -60,6 +64,7 @@ public struct MicPrismIdentitySession: Decodable, Sendable {
 }
 
 public struct MicPrismDiscovery: Decodable, Sendable {
+    public let selectionRevision: Int?
     public let service: MicPrismDiscoveredService?
 }
 
@@ -104,13 +109,15 @@ public struct PrismRequest: Sendable {
     public let body: [String: JSONValue]?
     public let expectedService: MicPrismDiscoveredService?
     public let identityAuthorityUrl: String?
+    public let expectedSelectionRevision: Int?
 
-    public init(_ path: String, method: String = "GET", body: [String: JSONValue]? = nil, expectedService: MicPrismDiscoveredService? = nil, identityAuthorityUrl: String? = nil) {
+    public init(_ path: String, method: String = "GET", body: [String: JSONValue]? = nil, expectedService: MicPrismDiscoveredService? = nil, identityAuthorityUrl: String? = nil, expectedSelectionRevision: Int? = nil) {
         self.path = path
         self.method = method
         self.body = body
         self.expectedService = expectedService
         self.identityAuthorityUrl = identityAuthorityUrl
+        self.expectedSelectionRevision = expectedSelectionRevision
     }
 
     public static func component(_ value: String) -> String {

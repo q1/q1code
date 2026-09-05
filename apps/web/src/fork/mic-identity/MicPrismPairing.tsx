@@ -1,19 +1,7 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CheckIcon, CopyIcon, KeyRoundIcon, LinkIcon, ShieldAlertIcon } from "lucide-react";
-import * as Effect from "effect/Effect";
-import type { HttpClient } from "effect/unstable/http";
 import type { MicIdentityAccess } from "@q1code/core/micIdentityApi";
-import type {
-  MicPrismPairingChallenge,
-  MicPrismPairedInstance,
-} from "@q1code/core/micPrismPairing";
-import {
-  startMicPrismPairing,
-  completeMicPrismPairing,
-  selectMicPrismInstance,
-  revokeMicPrismInstance,
-  type MicPrismPairingClientError,
-} from "@t3tools/client-runtime/fork";
+import { createMicPrismPairingController } from "@t3tools/client-runtime/fork";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { runtime } from "~/lib/runtime";
@@ -39,51 +27,38 @@ function PairingForm({ authorityUrl, generation, access, onChanged }: MicPrismPa
   const [origin, setOrigin] = useState("");
   const [publicKey, setPublicKey] = useState("");
   const [signature, setSignature] = useState("");
-  const [challenge, setChallenge] = useState<MicPrismPairingChallenge | null>(null);
-  const [paired, setPaired] = useState<MicPrismPairedInstance | null>(null);
-  const [confirmation, setConfirmation] = useState<{
-    id: string;
-    pairingRevision: number;
-    label: string;
-  } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const pending = useRef<AbortController | null>(null);
-  useEffect(() => () => pending.current?.abort(), []);
+  const changed = useRef(onChanged);
+  useLayoutEffect(() => {
+    changed.current = onChanged;
+  }, [onChanged]);
+  const [controller] = useState(() =>
+    createMicPrismPairingController({
+      input: {
+        baseUrl: authorityUrl,
+        getToken: readMicIdentityToken,
+        isCurrent: () => micIdentityGeneration() === generation,
+      },
+      access,
+      run: (effect, signal) => runtime.runPromise(effect, { signal }),
+      onChanged: () => changed.current(),
+    }),
+  );
+  useLayoutEffect(() => {
+    controller.updateAccess(access);
+  }, [access, controller]);
+  useEffect(() => {
+    controller.activate();
+    return () => controller.dispose();
+  }, [controller]);
+  const { challenge, paired, confirmation, busy, error, notice } = useSyncExternalStore(
+    controller.subscribe,
+    controller.getSnapshot,
+    controller.getSnapshot,
+  );
   const isCurrent = () => micIdentityGeneration() === generation;
-  const input = { baseUrl: authorityUrl, getToken: readMicIdentityToken, isCurrent };
   const service = access.discovery.service;
-
-  const run = async <A,>(
-    effect: Effect.Effect<A, MicPrismPairingClientError, HttpClient.HttpClient>,
-    accept: (value: A) => void,
-  ) => {
-    if (pending.current || !isCurrent()) return;
-    const controller = new AbortController();
-    pending.current = controller;
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await runtime.runPromise(effect.pipe(Effect.result), {
-        signal: controller.signal,
-      });
-      if (!isCurrent() || controller.signal.aborted) return;
-      if (result._tag === "Failure") {
-        setError(result.failure.message);
-        // Refresh authority facts on rejection; never replay a mutation.
-        onChanged();
-      } else accept(result.success);
-    } catch {
-      if (isCurrent() && !controller.signal.aborted)
-        setError("This change could not be confirmed. Refresh the connection before trying again.");
-    } finally {
-      if (pending.current === controller) pending.current = null;
-      if (isCurrent() && !controller.signal.aborted) setBusy(false);
-    }
-  };
+  const setError = controller.setError;
 
   const copyChallenge = async () => {
     if (!challenge) return;
@@ -141,18 +116,12 @@ function PairingForm({ authorityUrl, generation, access, onChanged }: MicPrismPa
               className="space-y-3"
               onSubmit={(event) => {
                 event.preventDefault();
-                void run(
-                  startMicPrismPairing({
-                    ...input,
-                    origin: origin.trim(),
-                    publicKey: publicKey.trim(),
-                    label: label.trim(),
-                  }),
-                  (value) => {
-                    setChallenge(value);
-                    setCopied(false);
-                  },
-                );
+                setCopied(false);
+                void controller.start({
+                  origin: origin.trim(),
+                  publicKey: publicKey.trim(),
+                  label: label.trim(),
+                });
               }}
             >
               <div className="grid gap-3 sm:grid-cols-2">
@@ -245,21 +214,9 @@ function PairingForm({ authorityUrl, generation, access, onChanged }: MicPrismPa
                 className="space-y-3"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  void run(
-                    completeMicPrismPairing({
-                      ...input,
-                      challengeId: challenge.challengeId,
-                      signature: signature.trim(),
-                    }),
-                    (instance) => {
-                      setPaired(instance);
-                      setChallenge(null);
-                      setSignature("");
-                      setNotice(
-                        "Host paired. Select it below when you are ready to change the shared connection.",
-                      );
-                    },
-                  );
+                  void controller.complete(signature.trim()).then((completed) => {
+                    if (completed && isCurrent()) setSignature("");
+                  });
                 }}
               >
                 <label
@@ -296,9 +253,9 @@ function PairingForm({ authorityUrl, generation, access, onChanged }: MicPrismPa
                     size="sm"
                     disabled={busy}
                     onClick={() => {
-                      setChallenge(null);
+                      controller.resetPairing();
                       setSignature("");
-                      setError(null);
+                      setCopied(false);
                     }}
                   >
                     Start again
@@ -318,19 +275,9 @@ function PairingForm({ authorityUrl, generation, access, onChanged }: MicPrismPa
                 size="sm"
                 disabled={busy}
                 onClick={() =>
-                  void run(
-                    selectMicPrismInstance({
-                      ...input,
-                      serviceInstanceId: paired.serviceInstanceId,
-                      expectedSelectionRevision: access.discovery.selectionRevision,
-                    }),
-                    () => {
-                      setPaired(null);
-                      setExpanded(false);
-                      setNotice("Shared Prism host updated.");
-                      onChanged();
-                    },
-                  )
+                  void controller.select(access.discovery.selectionRevision).then((selected) => {
+                    if (selected && isCurrent()) setExpanded(false);
+                  })
                 }
               >
                 <LinkIcon className="size-3.5" />
@@ -358,20 +305,7 @@ function PairingForm({ authorityUrl, generation, access, onChanged }: MicPrismPa
                   variant="destructive"
                   size="sm"
                   disabled={busy}
-                  onClick={() =>
-                    void run(
-                      revokeMicPrismInstance({
-                        ...input,
-                        serviceInstanceId: confirmation.id,
-                        expectedPairingRevision: confirmation.pairingRevision,
-                      }),
-                      () => {
-                        setConfirmation(null);
-                        setNotice("Host access revoked.");
-                        onChanged();
-                      },
-                    )
-                  }
+                  onClick={() => void controller.revoke()}
                 >
                   {busy ? "Revoking…" : "Revoke host access"}
                 </Button>
@@ -379,7 +313,7 @@ function PairingForm({ authorityUrl, generation, access, onChanged }: MicPrismPa
                   variant="ghost"
                   size="sm"
                   disabled={busy}
-                  onClick={() => setConfirmation(null)}
+                  onClick={() => controller.cancelRevoke()}
                 >
                   Cancel
                 </Button>
@@ -391,13 +325,7 @@ function PairingForm({ authorityUrl, generation, access, onChanged }: MicPrismPa
               size="sm"
               className="text-destructive hover:text-destructive"
               disabled={busy}
-              onClick={() =>
-                setConfirmation({
-                  id: service.id,
-                  pairingRevision: service.pairingRevision,
-                  label: service.label,
-                })
-              }
+              onClick={() => controller.prepareRevoke()}
             >
               Revoke {service.label}
             </Button>
