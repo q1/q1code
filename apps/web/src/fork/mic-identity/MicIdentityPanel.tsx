@@ -248,7 +248,13 @@ export function MicIdentityPanel() {
                 </p>
               </div>
               <span className="basis-full pl-14 text-xs text-muted-foreground sm:basis-auto sm:pl-0">
-                {current.access.session.capabilities.manage ? "Administrator" : "Inference access"}
+                {current.access.session.globalAdmin || current.access.session.capabilities.manage
+                  ? "Administrator"
+                  : current.access.session.permissions.some(
+                        (permission) => permission !== "prism:inference",
+                      )
+                    ? "Scoped access"
+                    : "Inference access"}
               </span>
             </div>
             {service && config?.authorityUrl ? (
@@ -298,7 +304,7 @@ export function MicIdentityPanel() {
                 saved.routing === current.routing ? (
                   <p
                     role="status"
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground"
+                    className="flex items-center gap-1.5 px-4 py-2 text-xs text-muted-foreground"
                   >
                     <CheckIcon className="size-3.5" />
                     Confirmed by Prism
