@@ -6,6 +6,15 @@
  * everywhere; it then explains how to turn Prism on.
  */
 import type { PrismAccount, PrismLoginProvider, PrismStatus } from "@q1code/core/prismApi";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  INITIAL_PRISM_HEALTH,
+  readForkFlag,
+  reducePrismHealth,
+  resolvePrismAccess,
+} from "@t3tools/client-runtime/fork";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/unstable/reactivity";
 import type { PrismRoutingStrategy } from "@q1code/core/config";
 import { useIsFocused, useNavigation } from "@react-navigation/native";
 import { createNativeStackScreen } from "@react-navigation/native-stack";
@@ -14,6 +23,7 @@ import {
   type ComponentProps,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -44,6 +54,7 @@ import { relativeTime } from "../../lib/time";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useServerConfigs } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
+import { environmentSession } from "../../state/session";
 import {
   PRISM_LOGIN_POLL_MS,
   PRISM_LOGIN_PROVIDERS,
@@ -70,6 +81,7 @@ import {
   shouldPollPrismStatus,
 } from "./prismSettings.logic";
 import { type PrismApi, usePrismApi } from "./usePrismApi";
+import { PrismIdentityBoundary } from "./PrismIdentitySection";
 
 type Reloader = () => Promise<void>;
 
@@ -139,12 +151,22 @@ export function PrismSettingsScreen() {
           </View>
         ) : (
           targets.map((target) => (
-            <EnvironmentPanel
+            <PrismIdentityBoundary
               key={target.environmentId}
               environmentId={target.environmentId}
-              label={targets.length > 1 ? target.label : null}
-              registerReloader={registerReloader}
-            />
+              enabled={readForkFlag(
+                configs.get(target.environmentId)?.environment.capabilities,
+                "mic-identity",
+              )}
+              allowLocalProvider={targets.length === 1}
+            >
+              <EnvironmentPanel
+                key={target.environmentId}
+                environmentId={target.environmentId}
+                label={targets.length > 1 ? target.label : null}
+                registerReloader={registerReloader}
+              />
+            </PrismIdentityBoundary>
           ))
         )}
       </ScrollView>
@@ -176,6 +198,13 @@ function EnvironmentPanel(props: {
 }) {
   const { environmentId, registerReloader } = props;
   const api = usePrismApi(environmentId);
+  const { environments } = useEnvironments();
+  const connected =
+    api !== null &&
+    environments.some(
+      (environment) =>
+        environment.environmentId === environmentId && environment.connection.phase === "connected",
+    );
   const mounted = useRef(true);
   useEffect(
     () => () => {
@@ -184,8 +213,20 @@ function EnvironmentPanel(props: {
     [],
   );
 
-  const [status, setStatus] = useState<PrismStatus | null>(null);
-  const [statusError, setStatusError] = useState<string | null>(null);
+  const [health, dispatchHealth] = useReducer(reducePrismHealth, INITIAL_PRISM_HEALTH);
+  const { status, error: statusError } = health;
+  const session = useAtomValue(environmentSession.sessionStateAtom(environmentId));
+  const sessionData = Option.getOrNull(AsyncResult.value(session));
+  const access = resolvePrismAccess({
+    health,
+    connected,
+    session: sessionData,
+    sessionError: session._tag === "Failure",
+  });
+  const accessRef = useRef(access);
+  useLayoutEffect(() => {
+    accessRef.current = access;
+  }, [access]);
   const [restart, setRestart] = useState<RestartState>({ running: false, note: null });
   const [accounts, dispatchAccounts] = useReducer(reducePrismAccounts, INITIAL_ACCOUNTS_STATE);
   const [routing, setRouting] = useState<PrismRoutingStrategy | null>(null);
@@ -202,13 +243,14 @@ function EnvironmentPanel(props: {
     const result = await api.status();
     if (!mounted.current) return;
     if (result._tag === "ok") {
-      setStatus(result.value);
+      dispatchHealth({ type: "received", status: result.value, receivedAt: Date.now() });
       dispatchUsageSource({ type: "status", status: result.value });
-      setStatusError(null);
+      return result.value;
     } else {
-      setStatusError(describePrismError(result.error));
+      dispatchHealth({ type: "failed", error: describePrismError(result.error) });
+      return null;
     }
-  }, [api]);
+  }, [api, dispatchHealth]);
 
   const loadAccounts = useCallback(async () => {
     if (!api) return;
@@ -234,7 +276,10 @@ function EnvironmentPanel(props: {
   }, [api]);
 
   const loadAll = useCallback(async () => {
-    await Promise.all([loadStatus(), loadAccounts(), loadRouting()]);
+    const latest = await loadStatus();
+    if (latest?.state === "ready" && latest.capabilities?.accountDetails !== false) {
+      await Promise.all([loadAccounts(), loadRouting()]);
+    }
   }, [loadAccounts, loadRouting, loadStatus]);
 
   useEffect(() => {
@@ -249,6 +294,7 @@ function EnvironmentPanel(props: {
   useStatusPolling(api !== null && !restart.running, loadStatus);
 
   const confirmRestart = () => {
+    if (!accessRef.current.configure) return;
     Alert.alert(
       "Restart the proxy?",
       "Provider CLIs lose their connection until it is ready again.",
@@ -260,7 +306,7 @@ function EnvironmentPanel(props: {
   };
 
   const runRestart = async () => {
-    if (!api) return;
+    if (!api || !accessRef.current.configure) return;
     setRestart({ running: true, note: null });
     const result = await api.restart();
     if (!mounted.current) return;
@@ -268,7 +314,7 @@ function EnvironmentPanel(props: {
       setRestart({ running: false, note: describePrismError(result.error) });
       return;
     }
-    setStatus(result.value);
+    dispatchHealth({ type: "received", status: result.value, receivedAt: Date.now() });
     const startedAt = Date.now();
     let step = nextRestartStep({ state: result.value.state, elapsedMs: 0 });
     while (step === "poll") {
@@ -276,7 +322,13 @@ function EnvironmentPanel(props: {
       if (!mounted.current) return;
       const polled = await api.status();
       if (!mounted.current) return;
-      if (polled._tag === "ok") setStatus(polled.value);
+      if (polled._tag === "ok") {
+        dispatchHealth({ type: "received", status: polled.value, receivedAt: Date.now() });
+      } else {
+        dispatchHealth({ type: "failed", error: describePrismError(polled.error) });
+        setRestart({ running: false, note: describePrismError(polled.error) });
+        return;
+      }
       step = nextRestartStep({
         state: polled._tag === "ok" ? polled.value.state : "starting",
         elapsedMs: Date.now() - startedAt,
@@ -290,12 +342,12 @@ function EnvironmentPanel(props: {
   };
 
   const toggleUsageSource = (enabled: boolean) => {
-    if (!api) return;
+    if (!api || !accessRef.current.configure || usageSource.rollback !== null) return;
     dispatchUsageSource({ type: "toggle", enabled });
     void api.setUsageSource(enabled).then((result) => {
       if (!mounted.current) return;
       if (result._tag === "ok") {
-        setStatus(result.value);
+        dispatchHealth({ type: "received", status: result.value, receivedAt: Date.now() });
         dispatchUsageSource({ type: "saved", status: result.value });
       } else {
         dispatchUsageSource({ type: "saveFailed", error: describePrismError(result.error) });
@@ -304,7 +356,7 @@ function EnvironmentPanel(props: {
   };
 
   const toggleAccount = (account: PrismAccount, enabled: boolean) => {
-    if (!api) return;
+    if (!api || !accessRef.current.accounts || accounts.pending[account.id]) return;
     dispatchAccounts({ type: "toggle", id: account.id, disabled: !enabled });
     void api.patchAccount(account.id, { disabled: !enabled }).then((result) => {
       if (!mounted.current) return;
@@ -317,6 +369,7 @@ function EnvironmentPanel(props: {
   };
 
   const confirmRemove = (account: PrismAccount) => {
+    if (!accessRef.current.accounts) return;
     Alert.alert(
       `Remove ${account.email ?? account.label}?`,
       "The auth file is deleted from the proxy and the removal syncs to the other environments.",
@@ -326,7 +379,7 @@ function EnvironmentPanel(props: {
           text: "Remove",
           style: "destructive",
           onPress: () => {
-            if (!api) return;
+            if (!api || !accessRef.current.accounts) return;
             dispatchAccounts({ type: "remove", id: account.id });
             void api.deleteAccount(account.id).then((result) => {
               if (!mounted.current) return;
@@ -347,7 +400,7 @@ function EnvironmentPanel(props: {
   };
 
   const selectRouting = (strategy: PrismRoutingStrategy) => {
-    if (!api || routingBusy || strategy === routing) return;
+    if (!api || !accessRef.current.routing || routingBusy || strategy === routing) return;
     const previous = routing;
     setRouting(strategy);
     setRoutingError(null);
@@ -364,44 +417,50 @@ function EnvironmentPanel(props: {
     });
   };
 
-  if (!api) {
-    return (
-      <PanelFrame label={props.label}>
-        <SettingsSection title="Status">
-          <Text className="p-4 text-base text-foreground-muted">Connecting…</Text>
-        </SettingsSection>
-      </PanelFrame>
-    );
-  }
-
   return (
     <PanelFrame label={props.label}>
       <StatusSection
         status={status}
-        error={statusError}
+        error={statusError ?? (!connected ? "The environment is disconnected." : null)}
         restart={restart}
         usageSource={usageSource}
+        writable={access.configure}
         onRestart={confirmRestart}
         onUsageSourceChange={toggleUsageSource}
       />
-      <AccountsSection
-        state={accounts}
-        onToggle={toggleAccount}
-        onRemove={confirmRemove}
-        onRetry={() => void loadAccounts()}
-      />
-      <AddAccountSection
-        api={api}
-        login={login}
-        dispatch={dispatchLogin}
-        onCompleted={() => void loadAccounts()}
-      />
-      <RoutingSection
-        strategy={routing}
-        error={routingError}
-        busy={routingBusy}
-        onSelect={selectRouting}
-      />
+      {access.accountDetails ? (
+        <AccountsSection
+          state={accounts}
+          writable={access.accounts}
+          onToggle={toggleAccount}
+          onRemove={confirmRemove}
+          onRetry={() => void loadAccounts()}
+        />
+      ) : (
+        <SettingsSection title="Accounts">
+          <Text className="p-4 text-sm text-foreground-muted">
+            Pooled account details require administrative access.
+          </Text>
+        </SettingsSection>
+      )}
+      {access.accountDetails && api !== null ? (
+        <>
+          <AddAccountSection
+            api={api}
+            writable={access.accounts}
+            login={login}
+            dispatch={dispatchLogin}
+            onCompleted={() => void loadAccounts()}
+          />
+          <RoutingSection
+            strategy={routing}
+            error={routingError}
+            busy={routingBusy}
+            writable={access.routing}
+            onSelect={selectRouting}
+          />
+        </>
+      ) : null}
     </PanelFrame>
   );
 }
@@ -420,7 +479,7 @@ function PanelFrame(props: { readonly label: string | null; readonly children: R
 }
 
 /** Status polls only while this screen is on top and the app is in the foreground. */
-function useStatusPolling(enabled: boolean, poll: () => Promise<void>) {
+function useStatusPolling(enabled: boolean, poll: () => Promise<unknown>) {
   const focused = useIsFocused();
   const [appState, setAppState] = useState<string>(AppState.currentState ?? "active");
   useEffect(() => {
@@ -439,6 +498,7 @@ function StatusSection(props: {
   readonly error: string | null;
   readonly restart: RestartState;
   readonly usageSource: PrismUsageSourceState;
+  readonly writable: boolean;
   readonly onRestart: () => void;
   readonly onUsageSourceChange: (enabled: boolean) => void;
 }) {
@@ -454,13 +514,19 @@ function StatusSection(props: {
       ) : (
         <View className="gap-3 p-4">
           <View className="flex-row items-center gap-3">
-            <StatusPill {...prismStateTone(status.state)} />
+            {props.error ? (
+              <StatusPill {...prismStateTone("failed")} label="Offline" />
+            ) : (
+              <StatusPill {...prismStateTone(status.state)} />
+            )}
             <View className="flex-1" />
-            <PillButton
-              label={props.restart.running ? "Restarting…" : "Restart"}
-              disabled={props.restart.running}
-              onPress={props.onRestart}
-            />
+            {status.capabilities?.manage !== false ? (
+              <PillButton
+                label={props.restart.running ? "Restarting…" : "Restart"}
+                disabled={!props.writable || props.restart.running}
+                onPress={props.onRestart}
+              />
+            ) : null}
           </View>
           {describePrismStatus(status, relativeTime).map((line) => (
             <View key={line.label} className="flex-row gap-3">
@@ -470,9 +536,17 @@ function StatusSection(props: {
               </Text>
             </View>
           ))}
-          {props.error ? <ErrorText>{props.error}</ErrorText> : null}
+          {props.error ? (
+            <ErrorText>{`Last known state: ${status.state}. ${props.error}`}</ErrorText>
+          ) : null}
           {props.restart.note ? <ErrorText>{props.restart.note}</ErrorText> : null}
-          <UsageSourceRow state={props.usageSource} onChange={props.onUsageSourceChange} />
+          {status.capabilities?.manage !== false ? (
+            <UsageSourceRow
+              state={props.usageSource}
+              writable={props.writable}
+              onChange={props.onUsageSourceChange}
+            />
+          ) : null}
         </View>
       )}
     </SettingsSection>
@@ -481,6 +555,7 @@ function StatusSection(props: {
 
 /** Whether Prism publishes its pooled accounts to Usage → Limits; flips at once and rolls back on failure. */
 function UsageSourceRow(props: {
+  readonly writable: boolean;
   readonly state: PrismUsageSourceState;
   readonly onChange: (enabled: boolean) => void;
 }) {
@@ -492,7 +567,7 @@ function UsageSourceRow(props: {
         <Text className="min-w-0 flex-1 text-sm text-foreground">{PRISM_USAGE_SOURCE_LABEL}</Text>
         <ThemedSwitch
           accessibilityLabel={PRISM_USAGE_SOURCE_LABEL}
-          disabled={pending || state.enabled === null}
+          disabled={!props.writable || pending || state.enabled === null}
           value={state.enabled ?? true}
           onValueChange={props.onChange}
         />
@@ -503,6 +578,7 @@ function UsageSourceRow(props: {
 }
 
 function AccountsSection(props: {
+  readonly writable: boolean;
   readonly state: ReturnType<typeof reducePrismAccounts>;
   readonly onToggle: (account: PrismAccount, enabled: boolean) => void;
   readonly onRemove: (account: PrismAccount) => void;
@@ -536,14 +612,14 @@ function AccountsSection(props: {
             key={account.id}
             account={account}
             first={index === 0 && !state.error}
-            pending={account.id in state.pending}
+            pending={!props.writable || account.id in state.pending}
             error={state.rowErrors[account.id] ?? null}
             onToggle={(enabled) => props.onToggle(account, enabled)}
             onRemove={() => props.onRemove(account)}
           />
         ))
       )}
-      {state.accounts !== null && state.accounts.length > 0 ? (
+      {props.writable && state.accounts !== null && state.accounts.length > 0 ? (
         <Text className="border-t border-border-subtle px-4 py-3 text-xs text-foreground-muted">
           Long-press an account to remove it.
         </Text>
@@ -592,6 +668,7 @@ function AccountRow(props: {
 }
 
 function AddAccountSection(props: {
+  readonly writable: boolean;
   readonly api: PrismApi;
   readonly login: ReturnType<typeof reducePrismLoginFlow>;
   readonly dispatch: (event: Parameters<typeof reducePrismLoginFlow>[1]) => void;
@@ -602,7 +679,7 @@ function AddAccountSection(props: {
   const pendingSession = pendingPrismLoginSession(login);
 
   useEffect(() => {
-    if (!pendingSession) return;
+    if (!pendingSession || !props.writable) return;
     let cancelled = false;
     const tick = async () => {
       const result = await api.loginStatus(pendingSession);
@@ -615,9 +692,10 @@ function AddAccountSection(props: {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [api, dispatch, onCompleted, pendingSession]);
+  }, [api, dispatch, onCompleted, pendingSession, props.writable]);
 
   const start = (provider: PrismLoginProvider) => {
+    if (!props.writable) return;
     dispatch({ type: "start", provider });
     setRedirectDraft("");
     void api.startLogin(provider).then((result) => {
@@ -631,7 +709,7 @@ function AddAccountSection(props: {
   };
 
   const submitRedirect = () => {
-    if (login._tag !== "pending") return;
+    if (!props.writable || login._tag !== "pending" || login.submittingRedirect) return;
     const redirectUrl = redirectDraft.trim();
     if (redirectUrl.length === 0) return;
     const { sessionId } = login;
@@ -647,6 +725,7 @@ function AddAccountSection(props: {
   };
 
   const cancel = () => {
+    if (!props.writable) return;
     if (login._tag === "pending") void api.cancelLogin(login.sessionId);
     dispatch({ type: "cancel" });
   };
@@ -662,6 +741,7 @@ function AddAccountSection(props: {
                 <Chip
                   key={provider.value}
                   label={provider.label}
+                  disabled={!props.writable}
                   onPress={() => start(provider.value)}
                 />
               ))}
@@ -693,7 +773,7 @@ function AddAccountSection(props: {
                 label="Open browser"
                 onPress={() => void Linking.openURL(login.authUrl).catch(() => undefined)}
               />
-              <PillButton label="Cancel" onPress={cancel} />
+              <PillButton label="Cancel" disabled={!props.writable} onPress={cancel} />
             </View>
             <Text className="text-xs text-foreground-muted">
               If the browser cannot reach the server, paste the URL it redirected to:
@@ -710,11 +790,13 @@ function AddAccountSection(props: {
                 onChangeText={setRedirectDraft}
                 onSubmitEditing={submitRedirect}
                 returnKeyType="send"
-                editable={!login.submittingRedirect}
+                editable={props.writable && !login.submittingRedirect}
               />
               <PillButton
                 label={login.submittingRedirect ? "…" : "Submit"}
-                disabled={login.submittingRedirect || redirectDraft.trim().length === 0}
+                disabled={
+                  !props.writable || login.submittingRedirect || redirectDraft.trim().length === 0
+                }
                 onPress={submitRedirect}
               />
             </View>
@@ -741,6 +823,7 @@ function AddAccountSection(props: {
 }
 
 function RoutingSection(props: {
+  readonly writable: boolean;
   readonly strategy: PrismRoutingStrategy | null;
   readonly error: string | null;
   readonly busy: boolean;
@@ -755,7 +838,7 @@ function RoutingSection(props: {
               key={option.value}
               label={option.label}
               selected={option.value === props.strategy}
-              disabled={props.busy || props.strategy === null}
+              disabled={!props.writable || props.busy || props.strategy === null}
               onPress={() => props.onSelect(option.value)}
             />
           ))}
@@ -836,3 +919,5 @@ function SkeletonRows(props: { readonly count: number }) {
     </View>
   );
 }
+
+export { withMicPrismIdentity } from "./PersistentMicPrismIdentity";

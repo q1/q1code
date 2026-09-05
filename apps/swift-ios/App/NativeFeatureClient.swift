@@ -25,7 +25,7 @@ private struct T3ConnectManagedCleanupError: LocalizedError {
 @MainActor
 final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     FeatureProjectCreationClient, FeatureWorkspaceAssetResolving,
-    FeatureFeedbackSubmitting, T3ConnectCapable
+    FeatureFeedbackSubmitting, T3ConnectCapable, MicPrismThreadCapable
 {
     private static let maximumRetainedThreadDetails = 6
     private static let t3ConnectLogger = Logger(
@@ -38,6 +38,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private static let projectFaviconFallbackMarker = "project-favicon-missing"
 
     private let runtime: EnvironmentRuntime
+    private let micPrismClient = MicPrismClient()
+    lazy var micPrismThreads = MicPrismThreadController(identity: { [weak self] in
+        guard let controller = self?.t3ConnectController, let key = controller.resolution.configuration?.clerkPublishableKey else { return nil }
+        return controller.micPrismSessionID(expectedPublishableKey: key)
+    }, attach: { [weak self] environmentID, threadID, authorityURL in
+        guard let self else { throw MicPrismError.unavailable }
+        return try await self.prism(PrismRequest("/identity/threads/" + PrismRequest.component(threadID), method: "PUT", identityAuthorityUrl: authorityURL), environmentID: environmentID)
+    }, detach: { [weak self] environmentID, threadID in
+        guard let self else { throw MicPrismError.unavailable }
+        _ = try await self.prism(PrismRequest("/identity/threads/" + PrismRequest.component(threadID), method: "DELETE"), environmentID: environmentID)
+    })
     let t3ConnectController: T3ConnectController
     private let t3ConnectDeviceManager: any T3ConnectDeviceManaging
     private let hasMatchingT3ConnectController: Bool
@@ -342,6 +353,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func signOutT3Connect() async {
+        await micPrismThreads.disconnectAll()
         // Clear the account and relay-token cache even when Clerk's remote
         // sign-out fails, then revoke every locally minted managed credential.
         // Manual pairings are device-owned and deliberately survive sign-out.
@@ -420,7 +432,48 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func prism(_ input: PrismRequest, environmentID: String) async throws -> PrismResponse {
         let client = try await projectCreationClient(environmentID: environmentID)
-        return try await client.prism(input)
+        let isThreadBinding = input.path.hasPrefix("/identity/threads/") &&
+            input.path.split(separator: "/").count == 3 && input.body == nil &&
+            ["PUT", "DELETE"].contains(input.method)
+        // Disconnect remains environment-authorized when mic.sc sign-out or renewal fails.
+        if isThreadBinding && input.method == "DELETE" { return try await client.prism(input) }
+        let configuration = try await prismIdentityConfiguration(environmentID: environmentID)
+        guard configuration.enabled else { return try await client.prism(input) }
+        guard let key = configuration.clerkPublishableKey,
+              key == t3ConnectController.resolution.configuration?.clerkPublishableKey else {
+            throw FeatureCapabilityUnavailable("This build is not configured for this mic.sc sign-in service")
+        }
+        let controller = t3ConnectController
+        guard let sessionID = controller.micPrismSessionID(expectedPublishableKey: key) else {
+            throw MicPrismError.signedOut
+        }
+        if isThreadBinding {
+            if let authority = input.identityAuthorityUrl, authority != configuration.authorityUrl { throw MicPrismError.unavailable }
+            let result = try await client.prism(input, micScToken: {
+                guard await controller.micPrismSessionID(expectedPublishableKey: key) == sessionID else { throw MicPrismError.signedOut }
+                let token = try await controller.micPrismToken(expectedPublishableKey: key)
+                guard await controller.micPrismSessionID(expectedPublishableKey: key) == sessionID else { throw MicPrismError.signedOut }
+                return token
+            })
+            guard controller.micPrismSessionID(expectedPublishableKey: key) == sessionID else { throw MicPrismError.signedOut }
+            return result
+        }
+        return try await micPrismClient.call(input, configuration: configuration, token: {
+            try await controller.micPrismToken(expectedPublishableKey: key)
+        }, isCurrent: {
+            await controller.micPrismSessionID(expectedPublishableKey: key) == sessionID
+        })
+    }
+
+    func prismIdentityConfiguration(environmentID: String) async throws -> MicPrismIdentityConfiguration {
+        guard serverConfigsByEnvironmentID[environmentID]?.environment?.capabilities.forkFlags?["mic-identity"] == true else { return .disabled }
+        let client = try await projectCreationClient(environmentID: environmentID)
+        return try await client.prismIdentityConfiguration()
+    }
+
+    func prismSession(environmentID: String) async throws -> AuthSessionState {
+        let client = try await projectCreationClient(environmentID: environmentID)
+        return try await client.authSession()
     }
 
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {
@@ -4344,7 +4397,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             connectionDetail: environment.isEnabled
                 ? environmentConnectionDetails[environment.id]
                 : nil,
-            prismEnabled: serverConfigsByEnvironmentID[environment.id]?.environment?.capabilities.forkFlags?["prism"]
+            prismEnabled: serverConfigsByEnvironmentID[environment.id]?.environment?.capabilities.forkFlags?["prism"] == true || serverConfigsByEnvironmentID[environment.id]?.environment?.capabilities.forkFlags?["mic-identity"] == true
         )
     }
 

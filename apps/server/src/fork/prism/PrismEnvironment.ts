@@ -32,9 +32,20 @@ export type PrismUsageLimitSourceEntry = readonly [UsageLimitSourceId, UsageLimi
 
 let published: PrismEndpoint | undefined;
 let enabled = false;
+let identityRequired = false;
 const endpointEvents = Effect.runSync(PubSub.unbounded<void>());
 export const prismEndpointChanges = Stream.fromPubSub(endpointEvents);
 export const isPrismEnabled = () => enabled;
+export const isPrismIdentityRequired = () => identityRequired;
+/** Identity mode cannot publish shared serving or management keys to provider/usage consumers. */
+export const publishPrismIdentityRequired = (value: boolean) => {
+  if (identityRequired === value) return;
+  const before = prismUsageLimitSource();
+  identityRequired = value;
+  PubSub.publishUnsafe(endpointEvents, undefined);
+  const after = prismUsageLimitSource();
+  if (!sameEntry(before, after)) PubSub.publishUnsafe(usageSourcePubSub, after);
+};
 export const publishPrismEnabled = (value: boolean) => {
   if (enabled === value) return;
   enabled = value;
@@ -64,7 +75,8 @@ export const publishPrismEndpoint = (endpoint: PrismEndpoint | undefined): void 
   if (!sameEntry(before, after)) PubSub.publishUnsafe(usageSourcePubSub, after);
 };
 
-export const currentPrismEndpoint = (): PrismEndpoint | undefined => published;
+export const currentPrismEndpoint = (): PrismEndpoint | undefined =>
+  identityRequired ? undefined : published;
 
 /**
  * Fires whenever the Prism usage-limit source appears, disappears, or points
@@ -83,7 +95,7 @@ export const refreshOnPrismUsageSourceChange = (
 /** The `usageLimitSources` entry for the proxy; defined only while it is ready and `prism.usageSource` is on. */
 export const prismUsageLimitSource = (): PrismUsageLimitSourceEntry | undefined => {
   const endpoint = published;
-  if (endpoint === undefined || !endpoint.usageSource) return undefined;
+  if (identityRequired || endpoint === undefined || !endpoint.usageSource) return undefined;
   return [
     UsageLimitSourceId.make(PRISM_USAGE_SOURCE_ID),
     {

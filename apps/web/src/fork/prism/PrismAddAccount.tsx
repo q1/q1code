@@ -36,7 +36,7 @@ export function PrismAddAccountSection({
   onCompleted,
 }: {
   readonly api: PrismApi | null;
-  /** The accounts list loaded, so a new sign-in has somewhere to land. */
+  /** The proxy is live and this client may manage its accounts. */
   readonly writable: boolean;
   /** Called once per completed sign-in with the new account id when the sidecar reports it. Keep it stable. */
   readonly onCompleted: (accountId: string | null) => void;
@@ -47,7 +47,7 @@ export function PrismAddAccountSection({
   const pendingSession = pendingPrismLoginSession(flow);
 
   useEffect(() => {
-    if (pendingSession === null || api === null) return;
+    if (pendingSession === null || api === null || !writable) return;
     let cancelled = false;
     const poll = async () => {
       const result = await api.loginStatus(pendingSession);
@@ -70,7 +70,7 @@ export function PrismAddAccountSection({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [pendingSession, api]);
+  }, [pendingSession, api, writable]);
 
   useEffect(() => {
     if (flow._tag !== "completed") return;
@@ -79,7 +79,7 @@ export function PrismAddAccountSection({
   }, [flow, onCompleted]);
 
   const startLogin = async () => {
-    if (api === null) return;
+    if (api === null || !writable) return;
     dispatch({ type: "start", provider });
     const result = await api.startLogin(provider);
     if (result._tag === "error") {
@@ -90,7 +90,7 @@ export function PrismAddAccountSection({
   };
 
   const cancelLogin = async () => {
-    if (api === null || flow._tag !== "pending") return;
+    if (api === null || !writable || flow._tag !== "pending") return;
     const sessionId = flow.sessionId;
     dispatch({ type: "cancel" });
     setRedirectDraft("");
@@ -101,7 +101,7 @@ export function PrismAddAccountSection({
   };
 
   const submitRedirect = async () => {
-    if (api === null || flow._tag !== "pending" || flow.submittingRedirect) return;
+    if (api === null || !writable || flow._tag !== "pending" || flow.submittingRedirect) return;
     const redirectUrl = redirectDraft.trim();
     if (redirectUrl.length === 0) return;
     const sessionId = flow.sessionId;
@@ -204,7 +204,7 @@ export function PrismAddAccountSection({
                     value={redirectDraft}
                     placeholder="http://localhost:.../callback?code=…&state=…"
                     spellCheck={false}
-                    disabled={flow.submittingRedirect}
+                    disabled={!writable || flow.submittingRedirect}
                     onChange={(event) => setRedirectDraft(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter") return;
@@ -216,7 +216,9 @@ export function PrismAddAccountSection({
                     size="sm"
                     variant="outline"
                     className="shrink-0"
-                    disabled={flow.submittingRedirect || redirectDraft.trim().length === 0}
+                    disabled={
+                      !writable || flow.submittingRedirect || redirectDraft.trim().length === 0
+                    }
                     onClick={() => void submitRedirect()}
                   >
                     {flow.submittingRedirect ? "Submitting…" : "Complete"}
@@ -228,7 +230,12 @@ export function PrismAddAccountSection({
               </div>
             ) : null}
             <div>
-              <Button size="sm" variant="ghost" onClick={() => void cancelLogin()}>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={!writable}
+                onClick={() => void cancelLogin()}
+              >
                 Cancel sign-in
               </Button>
             </div>

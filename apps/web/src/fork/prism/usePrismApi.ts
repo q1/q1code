@@ -6,6 +6,8 @@
  */
 import {
   cancelPrismLogin,
+  connectMicPrismThread,
+  disconnectMicPrismThread,
   type PrismAccountId,
   type PrismAccountPatch,
   type PrismClientError,
@@ -17,6 +19,9 @@ import {
   getPrismRouting,
   getPrismStatus,
   getPrismSyncStatus,
+  getPrismIdentityConfig,
+  getPrismIdentityAccess,
+  readForkFlag,
   listPrismAccounts,
   patchPrismAccount,
   restartPrism,
@@ -30,11 +35,19 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { HttpClient } from "effect/unstable/http";
-import { useMemo } from "react";
+import { useMemo, useSyncExternalStore } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { MicIdentityUnauthorizedError } from "@q1code/core/micIdentity";
 
 import { runtime } from "~/lib/runtime";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { usePreparedConnection } from "~/state/session";
+import { primaryServerConfigAtom, serverEnvironment } from "~/state/server";
+import {
+  micIdentityGeneration,
+  readMicIdentityToken,
+  subscribeMicIdentity,
+} from "../mic-identity/micIdentitySession";
 
 import { describePrismPermissionError } from "./prismAccountsState";
 
@@ -48,13 +61,24 @@ type Call<A> = (
   input: PrismClientInput,
 ) => Effect.Effect<A, PrismClientError, HttpClient.HttpClient>;
 
-const bindCalls = (prepared: PrismClientInput["prepared"]) => {
-  const run = <A>(call: Call<A>): Promise<PrismResult<A>> =>
+const bindCalls = (
+  prepared: PrismClientInput["prepared"],
+  identity: boolean,
+  generation: number,
+) => {
+  const run = <A>(call: Call<A>, human = identity): Promise<PrismResult<A>> =>
     runtime
       .runPromise(
         Effect.gen(function* () {
+          if (human && micIdentityGeneration() !== generation) {
+            return yield* new MicIdentityUnauthorizedError({ reason: "sign-in-required" });
+          }
           const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
-          return yield* call({ prepared, signer });
+          return yield* call({
+            prepared,
+            signer,
+            ...(human ? { micScToken: readMicIdentityToken } : {}),
+          });
         }).pipe(
           Effect.match({
             onFailure: (error): PrismResult<A> => ({ _tag: "error", error }),
@@ -65,6 +89,12 @@ const bindCalls = (prepared: PrismClientInput["prepared"]) => {
       .catch((): PrismResult<A> => ({ _tag: "error", error: { _tag: "UnknownError" } }));
 
   return {
+    connectThread: (threadId: string) =>
+      run((input) => connectMicPrismThread({ ...input, threadId })),
+    disconnectThread: (threadId: string) =>
+      run((input) => disconnectMicPrismThread({ ...input, threadId }), false),
+    identityConfig: () => run(getPrismIdentityConfig),
+    identityAccess: () => run(getPrismIdentityAccess),
     status: () => run(getPrismStatus),
     /** Answers with the status right after; poll `status` until `ready` or `failed`. */
     restart: () => run(restartPrism),
@@ -92,23 +122,40 @@ const bindCalls = (prepared: PrismClientInput["prepared"]) => {
 export type PrismApi = ReturnType<typeof bindCalls>;
 
 /** `null` until the environment (the primary one by default) has a prepared connection. */
-export function usePrismApi(environmentId?: EnvironmentId | null): PrismApi | null {
+export function usePrismApi(
+  environmentId?: EnvironmentId | null,
+  bootstrap = false,
+): PrismApi | null {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const prepared = usePreparedConnection(
-    environmentId === undefined ? primaryEnvironmentId : environmentId,
+  const targetId = environmentId === undefined ? primaryEnvironmentId : environmentId;
+  const prepared = usePreparedConnection(targetId);
+  const config = useAtomValue(
+    targetId === null ? primaryServerConfigAtom : serverEnvironment.configValueAtom(targetId),
   );
+  const identity = readForkFlag(config?.environment.capabilities, "mic-identity");
+  const sessionGeneration = useSyncExternalStore(subscribeMicIdentity, micIdentityGeneration);
+  const generation = identity && !bootstrap ? sessionGeneration : 0;
   const preparedValue = Option.getOrNull(prepared);
-  return useMemo(() => (preparedValue ? bindCalls(preparedValue) : null), [preparedValue]);
+  return useMemo(() => {
+    return preparedValue ? bindCalls(preparedValue, identity && !bootstrap, generation) : null;
+  }, [preparedValue, identity, bootstrap, generation]);
 }
 
-export function isPrismPermissionError(
-  error: PrismCallError,
-): error is Extract<
+export function isPrismPermissionError(error: PrismCallError): error is Extract<
   PrismCallError,
-  { _tag: "EnvironmentScopeRequiredError" | "EnvironmentAuthInvalidError" }
+  {
+    _tag:
+      | "EnvironmentScopeRequiredError"
+      | "EnvironmentAuthInvalidError"
+      | "MicIdentityUnauthorizedError"
+      | "MicIdentityForbiddenError";
+  }
 > {
   return (
-    error._tag === "EnvironmentScopeRequiredError" || error._tag === "EnvironmentAuthInvalidError"
+    error._tag === "EnvironmentScopeRequiredError" ||
+    error._tag === "EnvironmentAuthInvalidError" ||
+    error._tag === "MicIdentityUnauthorizedError" ||
+    error._tag === "MicIdentityForbiddenError"
   );
 }
 

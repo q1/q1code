@@ -3,6 +3,62 @@ import XCTest
 
 @MainActor
 final class NativeContractExpansionTests: XCTestCase {
+    func testPrismRenewsMicIdentityWithoutReplacingEnvironmentAuthorization() async throws {
+        let environment = Environment(id: "prism-env", label: "Prism", httpBaseURL: URL(string: "https://prism.example")!, webSocketBaseURL: URL(string: "wss://prism.example")!)
+        let credentials = InMemoryCredentialStore(credentials: [environment.id: EnvironmentCredential(accessToken: "environment-credential", scopes: ["orchestration:read"])])
+        let transport = AccessHTTPTransport()
+        let api = EnvironmentAPI(transport: transport, credentials: credentials)
+        let source = PrismTestTokenSource()
+        _ = try await api.prism(PrismRequest("/status"), environment: environment, micScToken: { await source.next() })
+        _ = try await api.prism(PrismRequest("/status"), environment: environment, micScToken: { await source.next() })
+        _ = try await api.prism(PrismRequest("/status"), environment: environment)
+        let requests = await transport.requests
+        XCTAssertEqual(requests.map { $0.value(forHTTPHeaderField: "Authorization") }, Array(repeating: "Bearer environment-credential", count: 3))
+        XCTAssertEqual(requests.map { $0.value(forHTTPHeaderField: "x-mic-sc-session") }, ["mic-token-1", "mic-token-2", nil])
+    }
+
+    func testPrismRejectsBeforeSendingWhenMicIdentityRenewalFails() async throws {
+        let environment = Environment(id: "prism-env", label: "Prism", httpBaseURL: URL(string: "https://prism.example")!, webSocketBaseURL: URL(string: "wss://prism.example")!)
+        let credentials = InMemoryCredentialStore(credentials: [environment.id: EnvironmentCredential(accessToken: "environment-credential", scopes: ["orchestration:read"])])
+        let transport = AccessHTTPTransport()
+        let api = EnvironmentAPI(transport: transport, credentials: credentials)
+        do {
+            _ = try await api.prism(PrismRequest("/status"), environment: environment, micScToken: { throw HTTPError.missingCredential })
+            XCTFail("Expected failed mic.sc renewal to stop the request")
+        } catch { }
+        let requests = await transport.requests
+        XCTAssertTrue(requests.isEmpty)
+    }
+    func testPrismScopeAndStaleStatusDecisions() throws {
+        let status = try JSONDecoder().decode(PrismResponse.self, from: Data(#"{"state":"ready","role":"primary"}"#.utf8))
+        let session = try JSONDecoder().decode(AuthSessionState.self, from: Data(#"{"authenticated":true,"scopes":["orchestration:read","access:write"]}"#.utf8))
+        let live = PrismAccess(status: status, stale: false, connected: true, session: session)
+        XCTAssertTrue(live.accounts)
+        XCTAssertTrue(live.configure)
+        let offline = PrismAccess(status: status, stale: true, connected: true, session: session)
+        XCTAssertTrue(offline.accountDetails)
+        XCTAssertFalse(offline.accounts)
+        XCTAssertFalse(offline.routing)
+        XCTAssertFalse(offline.configure)
+        let unpaired = PrismAccess(status: status, stale: false, connected: true, session: nil)
+        XCTAssertFalse(unpaired.accounts)
+        XCTAssertFalse(unpaired.configure)
+    }
+
+    func testPrismIdentityCapabilitiesDoNotGrantLocalConfigurationAccess() throws {
+        let status = try JSONDecoder().decode(PrismResponse.self, from: Data(#"{"state":"ready","role":"primary","capabilities":{"inference":true,"manage":true,"accountDetails":true}}"#.utf8))
+        let session = try JSONDecoder().decode(AuthSessionState.self, from: Data(#"{"authenticated":true,"scopes":["orchestration:read"]}"#.utf8))
+        let access = PrismAccess(status: status, stale: false, connected: true, session: session)
+        XCTAssertTrue(access.accounts)
+        XCTAssertTrue(access.routing)
+        XCTAssertFalse(access.configure)
+        let revoked = try JSONDecoder().decode(PrismResponse.self, from: Data(#"{"state":"ready","role":"primary","capabilities":{"inference":true,"manage":false,"accountDetails":false}}"#.utf8))
+        let restricted = PrismAccess(status: revoked, stale: false, connected: true, session: session)
+        XCTAssertFalse(restricted.accountDetails)
+        XCTAssertFalse(restricted.accounts)
+        XCTAssertFalse(restricted.routing)
+    }
+
     func testAdministrativeClientSessionContractsAndRequests() async throws {
         let environment = Environment(
             id: "environment-1",
@@ -446,6 +502,11 @@ final class NativeContractExpansionTests: XCTestCase {
         }
         XCTAssertEqual(decodedProviders.map(\.instanceId), ["codex"])
     }
+}
+
+private actor PrismTestTokenSource {
+    private var sequence = 0
+    func next() -> String { sequence += 1; return "mic-token-\(sequence)" }
 }
 
 private actor AccessHTTPTransport: HTTPTransport {

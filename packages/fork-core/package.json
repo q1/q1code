@@ -19,9 +19,25 @@
       "types": "./src/prism.ts",
       "import": "./src/prism.ts"
     },
+    "./micIdentity": {
+      "types": "./src/micIdentity.ts",
+      "import": "./src/micIdentity.ts"
+    },
+    "./micPrismApi": {
+      "types": "./src/micPrismApi.ts",
+      "import": "./src/micPrismApi.ts"
+    },
+    "./micPrismPairing": {
+      "types": "./src/micPrismPairing.ts",
+      "import": "./src/micPrismPairing.ts"
+    },
     "./prismApi": {
       "types": "./src/prismApi.ts",
       "import": "./src/prismApi.ts"
+    },
+    "./micIdentityApi": {
+      "types": "./src/micIdentityApi.ts",
+      "import": "./src/micIdentityApi.ts"
     }
   },
   "scripts": {

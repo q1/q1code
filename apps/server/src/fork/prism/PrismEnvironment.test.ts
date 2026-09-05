@@ -11,6 +11,8 @@ import {
   prismUsageLimitSource,
   prismUsageSourceChanges,
   publishPrismEndpoint,
+  publishPrismIdentityRequired,
+  currentPrismEndpoint,
   withPrismUsageLimitSource,
 } from "./PrismEnvironment.ts";
 
@@ -33,6 +35,46 @@ const prismEntry = {
   managementKey: "s",
   enabled: true,
 } as const;
+
+it.effect(
+  "identity mode hides shared serving and management access and restores flags-off behavior",
+  () =>
+    Effect.gen(function* () {
+      publishPrismIdentityRequired(false);
+      publishPrismEndpoint(endpoint);
+      const entries = [hub("https://hub.example")];
+      const collected = yield* prismUsageSourceChanges.pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+        Effect.tap(() => Effect.yieldNow),
+      );
+      try {
+        assert.strictEqual(currentPrismEndpoint(), endpoint);
+        publishPrismIdentityRequired(true);
+        assert.isUndefined(currentPrismEndpoint());
+        assert.isUndefined(prismUsageLimitSource());
+        assert.strictEqual(withPrismUsageLimitSource(entries), entries);
+
+        // Re-publication cannot expose a key while human authorization is required.
+        const renewed = { ...endpoint, apiKey: "renewed-fixture-key" };
+        publishPrismEndpoint(renewed);
+        assert.isUndefined(currentPrismEndpoint());
+        assert.isUndefined(prismUsageLimitSource());
+        publishPrismIdentityRequired(false);
+        assert.strictEqual(currentPrismEndpoint(), renewed);
+        assert.deepEqual(prismUsageLimitSource(), [UsageLimitSourceId.make("prism"), prismEntry]);
+        const events = yield* Fiber.join(collected);
+        assert.deepEqual(
+          events.map((entry) => entry?.[1].url),
+          [undefined, endpoint.baseUrl],
+        );
+      } finally {
+        publishPrismEndpoint(undefined);
+        publishPrismIdentityRequired(false);
+      }
+    }),
+);
 
 it("publishes no usage-limit source while off or while the toggle is off", () => {
   publishPrismEndpoint(undefined);

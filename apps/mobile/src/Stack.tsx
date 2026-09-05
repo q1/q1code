@@ -58,7 +58,7 @@ import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRoute
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
-import { prismSettingsStackScreen } from "./fork/prism/PrismSettingsScreen"; // fork: prism
+import { prismSettingsStackScreen, withMicPrismIdentity } from "./fork/prism/PrismSettingsScreen"; // fork: prism
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   SettingsLegalDocumentCloseHeaderButton,
@@ -449,7 +449,7 @@ function NotFoundScreen() {
 
 export const RootStack = createNativeStackNavigator({
   initialRouteName: "Home",
-  layout: RootStackLayout,
+  layout: withMicPrismIdentity(RootStackLayout), // fork: prism
   screenOptions: {
     headerShown: false,
   },

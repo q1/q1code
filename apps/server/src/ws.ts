@@ -1,3 +1,4 @@
+import { micPrismEngineForSession } from "./fork/mic-identity/MicPrismThreads.ts"; // fork: mic-identity
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -467,7 +468,7 @@ const makeWsRpcLayer = (
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-      const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const orchestrationEngine = yield* micPrismEngineForSession(currentSessionId); // fork: mic-identity
       const threadDeletionReactor = yield* ThreadDeletionReactor;
       const analytics = yield* AnalyticsService.AnalyticsService;
       // Every command dispatched on this connection carries the connecting

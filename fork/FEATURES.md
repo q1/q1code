@@ -53,6 +53,23 @@ Fields per entry:
 - **upstream**: no. Upstream's discovery is client-driven by design.
 - **removal condition**: upstream adds server-side release discovery for GitHub-provider updates.
 
+## mic-identity
+
+- **status**: active
+- **purpose**: signed-in mic.sc users discover their paired Prism service and receive only the inference and management capabilities granted by its authority, without gaining q1code host access.
+- **flags**: `mic-identity`, default off; hosted web additionally supports explicit `VITE_T3FORK_MIC_IDENTITY` public configuration. The legacy local gateway uses `prism` separately.
+- **owned dirs**: `packages/fork-core/src/micIdentity*`, `packages/fork-core/src/micPrism*`, `packages/client-runtime/src/fork/`, `apps/server/src/fork/mic-identity/`, `apps/web/src/fork/mic-identity/`, `apps/mobile/src/fork/`, `apps/swift-ios/`.
+- **seams**: reuse the existing authenticated Prism API mounting in `apps/server/src/server.ts`, fork navigation slot in `apps/web/src/components/sidebar/SidebarChrome.tsx`, and settings slots. No additional upstream files planned. Identity headers supplement environment bearer/DPoP proofs; they never grant environment access. Fork configuration remains under `fork.json`.
+- **migration**: versioned `/v1/identity` and `/v1/prism/discovery` contracts are aligned with the independently owned backend. Direct service status/routing use exact permission strings. Legacy management refuses identity-mode access rather than substituting a shared key. Contract fixtures are synthetic and do not establish real Clerk, discovery, or inference acceptance. Legacy Prism behavior remains available with this flag off. Provider account lifecycle, eligibility, scheduling and refresh authority remain in Prism.
+- **surfaces**: web and desktop share the fork sign-in/status/settings UI; RN and carried SwiftUI consume the same permission/stale-state semantics. Preserve each environment's authorization and defaults. Claude/Codex retain native-provider routes and explicit direct choices; Grok uses its existing native adapter until the engine contract qualifies it. Cursor, OpenCode and Antigravity retain direct operation. Account sign-out/revocation clears client authorization; offline state cannot queue edits. Settings and Prism navigation expose identity; existing model options carry thread overrides on every client. No separate keybinding is required for sign-in.
+- **tests**: authority contract validation, fresh credentials per request and renewed origin/DPoP proofs, permission denial before engine calls, no identity-to-host privilege escalation, grant/session revocation, stale/offline mutation rejection, no quota-bypassing or streamed/tool-effect retry. Flags-off tests prove no authority call/header/capability change.
+- **upstream**: no. Planned commits: `feat(identity): scaffold mic.sc Prism integration`; `feat(identity): validate mic.sc access and paired discovery`; `feat(prism): enforce identity capabilities and stale-state controls`; `fix(prism): prevent unsafe direct retries`. Generic transport fixes, if discovered, will be isolated as upstream candidates before fork wiring.
+- **removal condition**: upstream provides configurable human identity plus independently scoped service discovery/authorization, or the fork stops using mic.sc identity.
+
+- **acceptance limits**: live Clerk browser/provider acceptance, native first-use sign-in without an environment connection, aggregate model eligibility, account/settings gateway adapters, atomic settings revisions and turnkey host-side pairing proof remain incomplete. Default Clerk session tokens, credential exchange, ordinary inference, host controls and renewable per-thread Claude/Codex brokers are implemented. Opaque server-stamped binding references fence queued turns across device/session changes; approvals remain with the initiating active session. Identity mode suppresses shared-key handoffs and automatic direct retries. The required revocation policy rejects new requests and terminates streams. Synthetic browser/gateway evidence is distinct from live service and native qualification. See `fork/docs/mic-identity.md`.
+
+---
+
 ## prism
 
 - **formerly**: `cliproxy`; renamed in the series on 2026-09-04, older commits keep the old trailer. The old `fork.json` key and `T3FORK_CLIPROXY` / `Q1CODE_CLIPROXY_SYNC_*` env vars are ignored; `ForkFlags.ts` logs one warning per leftover at server start.

@@ -18,7 +18,9 @@ import * as Schema from "effect/Schema";
 import type { PrismEndpoint } from "./PrismEnvironment.ts";
 
 /** What the Codex home needs from the proxy handoff: the origin and the client key, never the management secret. */
-export type CodexProxyEndpoint = Pick<PrismEndpoint, "baseUrl" | "apiKey">;
+export type CodexProxyEndpoint = Pick<PrismEndpoint, "baseUrl" | "apiKey"> & {
+  readonly apiKeyEnv?: string;
+};
 
 export const CODEX_PROXY_PROVIDER_ID = "q1code";
 
@@ -45,7 +47,9 @@ export const renderCodexProxyConfigToml = (endpoint: CodexProxyEndpoint): string
     `name = ${tomlString("q1code CLIProxyAPI")}`,
     `base_url = ${tomlString(`${endpoint.baseUrl}/v1`)}`,
     'wire_api = "responses"',
-    `http_headers = { Authorization = ${tomlString(`Bearer ${endpoint.apiKey}`)} }`,
+    endpoint.apiKeyEnv
+      ? `env_key = ${tomlString(endpoint.apiKeyEnv)}`
+      : `http_headers = { Authorization = ${tomlString(`Bearer ${endpoint.apiKey}`)} }`,
     "",
   ].join("\n");
 
