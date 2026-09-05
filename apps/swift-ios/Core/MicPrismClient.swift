@@ -1,10 +1,12 @@
 import Foundation
 
 public enum MicPrismError: LocalizedError, Sendable {
-    case signedOut, denied, unavailable, invalidResponse, unpaired, unsupported
+    case signedOut, denied, unavailable, invalidResponse, unpaired, unsupported, pairingConflict, invalidPairing
 
     public var errorDescription: String? {
         switch self {
+        case .pairingConflict: "The host or pairing changed. Refresh access and start again."
+        case .invalidPairing: "Check the host origin, public key and pairing proof."
         case .signedOut: "Sign in with mic.sc to continue."
         case .denied: "Your mic.sc account no longer has access to this Prism operation."
         case .unavailable: "Prism could not verify access. Try again when the service is available."
@@ -34,6 +36,9 @@ public struct MicPrismClient: Sendable {
         case ("GET", "/identity/access"), ("GET", "/status"), ("GET", "/models"), ("POST", "/chat"): permission = "prism:inference"
         case ("GET", "/routing"): permission = "prism:routing:read"
         case ("PUT", "/routing"): permission = "prism:routing:write"
+        case ("POST", "/identity/pairings/start"), ("POST", "/identity/pairings/complete"),
+             ("POST", "/identity/instances/select"), ("POST", "/identity/instances/revoke"):
+            permission = "prism:instances:manage"
         default: throw MicPrismError.unsupported
         }
         guard configuration.enabled, let origin = configuration.authorityUrl else {
@@ -45,10 +50,10 @@ public struct MicPrismClient: Sendable {
               ["global_admin", "member"].contains(identity.role), !identity.authorizationRevision.isEmpty else {
             throw MicPrismError.invalidResponse
         }
-        try identity.require(permission)
+        try identity.require(input.path == "/identity/access" ? nil : permission)
         let discovery: Discovery = try await request(origin, "/v1/prism/discovery", token: token, isCurrent: isCurrent)
         guard discovery.contractVersion == 1, discovery.selectionRevision >= 0 else { throw MicPrismError.invalidResponse }
-        try identity.require(permission)
+        try identity.require(input.path == "/identity/access" ? nil : permission)
         if let service = discovery.service {
             guard service.status == "paired", service.protocolVersion == 1,
                   service.pairingRevision > 0, !service.serviceInstanceId.isEmpty,
@@ -68,11 +73,19 @@ public struct MicPrismClient: Sendable {
                     "permissions": .array(identity.permissions.map(JSONValue.string)),
                     "authorizationExpiresAt": .number(identity.authorizationExpiresAt),
                 ]),
-                "discovery": .object(["service": discovery.service.map { service in .object([
+                "discovery": .object(["selectionRevision": .number(Double(discovery.selectionRevision)), "service": discovery.service.map { service in .object([
                     "id": .string(service.serviceInstanceId), "label": .string(service.displayName),
                     "apiUrl": .string(service.apiOrigin), "inferenceUrl": .string(service.inferenceOrigin), "pairingRevision": .number(Double(service.pairingRevision)),
                 ]) } ?? .null]),
             ])
+        }
+        if permission == "prism:instances:manage" {
+            if let expected = input.expectedSelectionRevision, expected != discovery.selectionRevision {
+                throw MicPrismError.pairingConflict
+            }
+            let result = try await pairing(input, origin: origin, subject: identity.subject, token: token, isCurrent: isCurrent)
+            try identity.require(input.path == "/identity/access" ? nil : permission)
+            return result
         }
         guard let service = discovery.service else { throw MicPrismError.unpaired }
         if input.path == "/status" {
@@ -80,7 +93,7 @@ public struct MicPrismClient: Sendable {
             guard status.serviceInstanceId == service.serviceInstanceId,
                   status.pairingRevision == service.pairingRevision,
                   status.authorization == "current", status.engineHealth == "unknown" else { throw MicPrismError.invalidResponse }
-            try identity.require(permission)
+            try identity.require(input.path == "/identity/access" ? nil : permission)
             // Verified access is distinct from engine readiness or provider eligibility.
             return try Self.response(["state": .string("access-verified"), "capabilities": .object([
                 "inference": .bool(true), "manage": .bool(false), "accountDetails": .bool(false),
@@ -96,7 +109,7 @@ public struct MicPrismClient: Sendable {
                   credential.pairingRevision == service.pairingRevision,
                   credential.expiresAt > now, credential.expiresAt <= now + 930_000,
                   credential.token.range(of: #"^msp1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$"#, options: .regularExpression) != nil else { throw MicPrismError.invalidResponse }
-            try identity.require(permission)
+            try identity.require(input.path == "/identity/access" ? nil : permission)
             if input.path == "/models" {
                 let catalog: Models = try await request(service.inferenceOrigin, "/v1/models", token: { credential.token }, isCurrent: isCurrent)
                 guard catalog.data.count <= 4096, catalog.data.allSatisfy({ !$0.id.isEmpty && $0.id.count <= 256 }) else { throw MicPrismError.invalidResponse }
@@ -122,11 +135,11 @@ public struct MicPrismClient: Sendable {
         let routing: Routing = try await request(service.apiOrigin, "/prism/v1/routing", method: input.method, body: input.body, token: token, isCurrent: isCurrent)
         guard ["round-robin", "weighted-round-robin", "fill-first"].contains(routing.strategy),
               input.method != "PUT" || routing.strategy == input.body?["strategy"]?.stringValue else { throw MicPrismError.invalidResponse }
-        try identity.require(permission)
+        try identity.require(input.path == "/identity/access" ? nil : permission)
         return try Self.response(["strategy": .string(routing.strategy)])
     }
 
-    private func request<T: Decodable>(
+    func request<T: Decodable>(
         _ origin: String, _ path: String, method: String = "GET", body: [String: JSONValue]? = nil,
         token: MicPrismTokenSource, isCurrent: @Sendable () async -> Bool, timeout: TimeInterval = 15
     ) async throws -> T {
@@ -155,6 +168,8 @@ public struct MicPrismClient: Sendable {
         case 200..<300: break
         case 401: throw MicPrismError.signedOut
         case 403: throw MicPrismError.denied
+        case 409: throw path.hasPrefix("/v1/prism/instances/") || path.hasPrefix("/v1/prism/pairings/") ? MicPrismError.pairingConflict : MicPrismError.unavailable
+        case 400: throw path.hasPrefix("/v1/prism/instances/") || path.hasPrefix("/v1/prism/pairings/") ? MicPrismError.invalidPairing : MicPrismError.invalidResponse
         case 404, 405, 501: throw MicPrismError.unsupported
         default: throw MicPrismError.unavailable
         }
@@ -162,7 +177,7 @@ public struct MicPrismClient: Sendable {
         catch { throw MicPrismError.invalidResponse }
     }
 
-    private static func url(_ origin: String, path: String, originOnly: Bool = false) throws -> URL {
+    static func url(_ origin: String, path: String, originOnly: Bool = false) throws -> URL {
         guard var parts = URLComponents(string: origin), let host = parts.host,
               parts.scheme == "https" || (parts.scheme == "http" && ["localhost", "127.0.0.1", "[::1]", "::1"].contains(host)),
               parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
@@ -173,16 +188,16 @@ public struct MicPrismClient: Sendable {
         return url
     }
 
-    private static func response(_ object: [String: JSONValue]) throws -> PrismResponse {
+    static func response(_ object: [String: JSONValue]) throws -> PrismResponse {
         try JSONDecoder().decode(PrismResponse.self, from: JSONEncoder().encode(object))
     }
 
     private struct Identity: Decodable {
         let contractVersion: Int, subject: String, role: String, permissions: [String]
         let authorizationExpiresAt: Double, authorizationRevision: String
-        func require(_ permission: String) throws {
+        func require(_ permission: String?) throws {
             guard authorizationExpiresAt > Date().timeIntervalSince1970 * 1000 else { throw MicPrismError.signedOut }
-            guard permissions.contains(permission) else { throw MicPrismError.denied }
+            if let permission, !permissions.contains(permission) { throw MicPrismError.denied }
         }
     }
     private struct Discovery: Decodable {
