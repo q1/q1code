@@ -72,12 +72,16 @@ confirmed by reading the service's applied value. Offline state retains the last
 verified host, marks it unavailable and disables requests and edits; no writes
 are queued. Account changes discard the previous account's results.
 
-Prism administrators can start a pairing challenge with the host's public key
+In web, desktop and native Prism settings, accounts with host-management access
+can start a pairing challenge with the host's public key
 and allowed HTTPS origin. The host must sign the exact challenge and serve its
 proof before completion. Select the paired host explicitly afterward. Host
 selection does not transfer provider credential-refresh ownership. Revoking the
 selected host requires confirmation and remains available when that host is
-offline. The current host helper does not yet automate signing a challenge issued
+offline. Host-management access does not require inference permission. If another
+administrator changes the selection while you confirm, refresh and review it
+before trying again. Expired challenges must be replaced; changes are never
+replayed automatically. The current host helper does not yet automate signing a challenge issued
 by this UI; host-side proof preparation is still required.
 
 The merged gateway currently supports routing management, not remote account

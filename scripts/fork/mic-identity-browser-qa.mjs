@@ -2,6 +2,7 @@
 /** Reproducible UI evidence using synthetic Clerk, identity, Prism and provider fixtures only. */
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -38,13 +39,29 @@ const state = {
   holdStream: false,
   revoked: new Set(),
   strategy: "round-robin",
+  selectionRevision: 1,
+  selectedPairing: null,
+  conflictNextSelection: false,
 };
 const metrics = {
   inferenceRequests: 0,
   cancelledStreams: 0,
   rejectedRequests: 0,
   routingWrites: 0,
+  pairingStarts: 0,
+  pairingCompletions: 0,
+  pairingSelections: 0,
+  pairingRevocations: 0,
+  pairingConflicts: 0,
 };
+// These ephemeral fixture keys never leave this process. Only the public key and synthetic
+// challenge/signature enter the browser. This does not exercise a deployed host proof endpoint.
+const pairingKey = NodeCrypto.generateKeyPairSync("ed25519");
+const pairingPublicKey = pairingKey.publicKey
+  .export({ type: "spki", format: "der" })
+  .toString("base64url");
+const challenges = new Map();
+const pairings = new Map();
 const streams = new Map();
 let webOrigin = "";
 let fixtureOrigin = "";
@@ -63,6 +80,7 @@ const actorFor = (request) => {
     return "member";
   if (header === "Bearer fixture-admin-session" || header === "Bearer msp1.admin.signature")
     return "admin";
+  if (header === "Bearer fixture-host-manager-session") return "host-manager";
   return null;
 };
 const json = (response, status, value) => {
@@ -114,7 +132,7 @@ const fixture = NodeHttp.createServer((request, response) => {
     )
       return deny(response, 403);
     const permissions = [
-      "prism:inference",
+      ...(actor === "host-manager" ? ["prism:instances:manage"] : ["prism:inference"]),
       ...(actor === "admin"
         ? [
             "prism:routing:read",
@@ -138,10 +156,10 @@ const fixture = NodeHttp.createServer((request, response) => {
     if (request.method === "GET" && pathname === "/v1/prism/discovery")
       return json(response, 200, {
         contractVersion: 1,
-        selectionRevision: 1,
+        selectionRevision: state.selectionRevision,
         service: state.unpaired
           ? null
-          : {
+          : (state.selectedPairing ?? {
               serviceInstanceId: "fixture-prism",
               displayName: "Shared Prism",
               apiOrigin: fixtureOrigin,
@@ -150,9 +168,124 @@ const fixture = NodeHttp.createServer((request, response) => {
               protocolVersion: 1,
               publicKey: "MCowBQYDK2VwAyEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
               status: "paired",
-            },
+            }),
       });
+    if (
+      (request.method === "POST" && pathname.startsWith("/v1/prism/pairings/")) ||
+      (request.method === "POST" && pathname.startsWith("/v1/prism/instances/"))
+    ) {
+      if (!permissions.includes("prism:instances:manage")) return deny(response, 403);
+      const body = await readJson(request);
+      const conflict = () => {
+        metrics.pairingConflicts += 1;
+        return deny(response, 409);
+      };
+      if (pathname === "/v1/prism/pairings/start") {
+        if (
+          body.origin !== fixtureOrigin ||
+          body.publicKey !== pairingPublicKey ||
+          typeof body.label !== "string" ||
+          !body.label.trim()
+        )
+          return deny(response, 400);
+        const challengeId = NodeCrypto.randomUUID();
+        const expiresAt = Date.now() + 300_000;
+        const challenge = JSON.stringify({
+          domain: "mic.sc/prism-pairing/v1",
+          challengeId,
+          nonce: NodeCrypto.randomBytes(32).toString("base64url"),
+          subject: `fixture-${actor}`,
+          origin: body.origin,
+          publicKey: body.publicKey,
+          expiresAt,
+          expectedServiceInstanceId: null,
+          expectedPairingRevision: 0,
+        });
+        challenges.set(challengeId, {
+          challenge,
+          expiresAt,
+          actor,
+          label: body.label,
+          consumed: false,
+        });
+        metrics.pairingStarts += 1;
+        return json(response, 200, {
+          challengeId,
+          challenge,
+          origin: body.origin,
+          publicKey: body.publicKey,
+          expiresAt,
+        });
+      }
+      if (pathname === "/v1/prism/pairings/complete") {
+        const record = challenges.get(body.challengeId);
+        if (!record || record.actor !== actor) return deny(response, 404);
+        if (record.consumed || record.expiresAt <= Date.now()) return conflict();
+        if (
+          typeof body.signature !== "string" ||
+          !/^[A-Za-z0-9_-]{86}$/.test(body.signature) ||
+          !NodeCrypto.verify(
+            null,
+            Buffer.from(record.challenge),
+            pairingKey.publicKey,
+            Buffer.from(body.signature, "base64url"),
+          )
+        )
+          return deny(response, 400);
+        record.consumed = true;
+        const serviceInstanceId = `fixture-paired-${pairings.size + 1}`;
+        pairings.set(serviceInstanceId, {
+          serviceInstanceId,
+          displayName: record.label,
+          apiOrigin: fixtureOrigin,
+          inferenceOrigin: fixtureOrigin,
+          pairingRevision: 1,
+          protocolVersion: 1,
+          publicKey: pairingPublicKey,
+          status: "paired",
+        });
+        metrics.pairingCompletions += 1;
+        return json(response, 200, { serviceInstanceId, pairingRevision: 1 });
+      }
+      if (pathname === "/v1/prism/instances/select") {
+        const paired = pairings.get(body.serviceInstanceId);
+        if (!paired || paired.status !== "paired") return deny(response, 404);
+        if (state.conflictNextSelection) {
+          state.conflictNextSelection = false;
+          state.selectionRevision += 1;
+        }
+        if (body.expectedSelectionRevision !== state.selectionRevision) return conflict();
+        state.selectedPairing = paired;
+        state.unpaired = false;
+        state.selectionRevision += 1;
+        metrics.pairingSelections += 1;
+        return json(response, 200, {
+          serviceInstanceId: paired.serviceInstanceId,
+          selectionRevision: state.selectionRevision,
+        });
+      }
+      if (pathname === "/v1/prism/instances/revoke") {
+        const paired = pairings.get(body.serviceInstanceId);
+        if (!paired || paired.status !== "paired") return deny(response, 404);
+        if (body.expectedPairingRevision !== paired.pairingRevision) return conflict();
+        paired.pairingRevision += 1;
+        paired.status = "revoked";
+        if (state.selectedPairing === paired) {
+          state.selectedPairing = null;
+          state.unpaired = true;
+          state.selectionRevision += 1;
+        }
+        metrics.pairingRevocations += 1;
+        return json(response, 200, {
+          serviceInstanceId: paired.serviceInstanceId,
+          pairingRevision: paired.pairingRevision,
+          selectionRevision: state.selectionRevision,
+        });
+      }
+      return deny(response, 404);
+    }
     if (request.method === "POST" && pathname === "/v1/prism/credentials") {
+      if (!permissions.includes("prism:inference")) return deny(response, 403);
       const body = await readJson(request);
       if (
         state.unpaired ||
@@ -192,6 +325,11 @@ const fixture = NodeHttp.createServer((request, response) => {
       } else if (request.method !== "GET") return deny(response, 405);
       return json(response, 200, { strategy: state.strategy });
     }
+    if (
+      ["/v1/models", "/v1/chat/completions"].includes(pathname) &&
+      !permissions.includes("prism:inference")
+    )
+      return deny(response, 403);
     if (request.method === "GET" && pathname === "/v1/models")
       return json(response, 200, {
         data: [
@@ -379,11 +517,28 @@ try {
     .getByRole("option", { name: "claude-sonnet-4-6", exact: true })
     .waitFor({ state: "attached", timeout: 30_000 });
   NodeAssert.equal(await page.getByLabel("Prism routing strategy").count(), 0);
+  NodeAssert.equal(await page.getByRole("heading", { name: "Host administration" }).count(), 0);
   NodeAssert.equal(await page.getByText("hidden-fixture-account@example.test").count(), 0);
   const denied = await fetch(`${fixtureOrigin}/prism/v1/routing`, {
     headers: { authorization: "Bearer fixture-member-session" },
   });
   NodeAssert.equal(denied.status, 403);
+  for (const path of [
+    "pairings/start",
+    "pairings/complete",
+    "instances/select",
+    "instances/revoke",
+  ]) {
+    const deniedMutation = await fetch(`${fixtureOrigin}/v1/prism/${path}`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer fixture-member-session",
+        "content-type": "application/json",
+      },
+      body: "{}",
+    });
+    NodeAssert.equal(deniedMutation.status, 403);
+  }
   await page.getByLabel("Message to Prism").fill("How can I tell my Prism connection is working?");
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await page
@@ -462,6 +617,118 @@ try {
   await page.getByText("No paired host yet", { exact: true }).waitFor();
   await photo("07-unpaired-admin.png");
   passed.push("Unpaired administrators can reach host recovery");
+  await bind("host-manager");
+  await page.getByRole("heading", { name: "Host administration" }).waitFor();
+  await page.getByText("No paired host yet", { exact: true }).waitFor();
+  NodeAssert.equal(await page.getByLabel("Message to Prism").count(), 0);
+  NodeAssert.equal(await page.getByLabel("Prism routing strategy").count(), 0);
+  await photo("08-manager-before-pairing.png");
+  const deniedManagerInference = await fetch(`${fixtureOrigin}/v1/prism/credentials`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer fixture-host-manager-session",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ serviceInstanceId: "fixture-prism", pairingRevision: 1 }),
+  });
+  NodeAssert.equal(deniedManagerInference.status, 403);
+  await page.getByRole("button", { name: "Pair a host", exact: true }).click();
+  await page.getByLabel("Host name", { exact: true }).fill("QA Primary PC");
+  await page.getByLabel("Approved origin", { exact: true }).fill(fixtureOrigin);
+  await page.getByLabel("Public verification key", { exact: true }).fill(pairingPublicKey);
+  await page.getByRole("button", { name: "Create pairing challenge", exact: true }).click();
+  await page.getByLabel("Exact pairing challenge", { exact: true }).waitFor();
+  const exactChallenge = await page
+    .getByLabel("Exact pairing challenge", { exact: true })
+    .inputValue();
+  const challengeId = JSON.parse(exactChallenge).challengeId;
+  NodeAssert.equal(exactChallenge, challenges.get(challengeId)?.challenge);
+  NodeAssert.equal(metrics.pairingStarts, 1);
+  const alteredSignature = NodeCrypto.sign(
+    null,
+    Buffer.from(`${exactChallenge} `),
+    pairingKey.privateKey,
+  ).toString("base64url");
+  const alteredProof = await fetch(`${fixtureOrigin}/v1/prism/pairings/complete`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer fixture-host-manager-session",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ challengeId, signature: alteredSignature }),
+  });
+  NodeAssert.equal(alteredProof.status, 400);
+  NodeAssert.equal(metrics.pairingCompletions, 0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  NodeAssert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+    false,
+  );
+  await page.getByLabel("Exact pairing challenge", { exact: true }).scrollIntoViewIfNeeded();
+  await photo("09-mobile-pairing-challenge.png");
+  await page.setViewportSize({ width: 1365, height: 1000 });
+  const signature = NodeCrypto.sign(
+    null,
+    Buffer.from(exactChallenge),
+    pairingKey.privateKey,
+  ).toString("base64url");
+  await page.getByLabel("Host signature", { exact: true }).fill(signature);
+  await page.getByRole("button", { name: "Verify and pair", exact: true }).click();
+  await page.getByRole("heading", { name: "QA Primary PC is paired", exact: true }).waitFor();
+  NodeAssert.equal(metrics.pairingCompletions, 1);
+  NodeAssert.equal(metrics.pairingSelections, 0);
+  NodeAssert.equal(state.unpaired, true);
+  await photo("10-paired-before-selection.png");
+  const replay = await fetch(`${fixtureOrigin}/v1/prism/pairings/complete`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer fixture-host-manager-session",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ challengeId, signature }),
+  });
+  NodeAssert.equal(replay.status, 409);
+  passed.push(
+    "Host-only manager pairs using exact Ed25519 challenge; altered proof and replay rejected; selection remains explicit",
+  );
+  state.conflictNextSelection = true;
+  await page.getByRole("button", { name: "Use this host for Prism", exact: true }).click();
+  await page
+    .getByText("The host or pairing changed. Refresh and start again.", { exact: true })
+    .waitFor();
+  NodeAssert.equal(metrics.pairingSelections, 0);
+  NodeAssert.equal(state.unpaired, true);
+  await photo("11-stale-selection-conflict.png");
+  await page.getByRole("button", { name: "Use this host for Prism", exact: true }).click();
+  await page.getByRole("button", { name: "Revoke QA Primary PC", exact: true }).waitFor();
+  NodeAssert.equal(metrics.pairingSelections, 1);
+  NodeAssert.equal(state.selectedPairing?.displayName, "QA Primary PC");
+  await photo("12-manager-selected-host.png");
+  passed.push(
+    "Stale selection is rejected without mutation or retry; deliberate retry uses refreshed revision",
+  );
+  await page.getByRole("button", { name: "Revoke QA Primary PC", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  NodeAssert.equal(metrics.pairingRevocations, 0);
+  await page.getByRole("button", { name: "Revoke QA Primary PC", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  NodeAssert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+    false,
+  );
+  await page
+    .getByRole("button", { name: "Revoke host access", exact: true })
+    .scrollIntoViewIfNeeded();
+  await photo("13-mobile-revoke-confirmation.png");
+  await page.getByRole("button", { name: "Revoke host access", exact: true }).click();
+  await page.getByText("No paired host yet", { exact: true }).waitFor();
+  NodeAssert.equal(metrics.pairingRevocations, 1);
+  NodeAssert.equal(state.selectedPairing, null);
+  await photo("14-manager-revoked-host.png");
+  await page.setViewportSize({ width: 1365, height: 1000 });
+  passed.push(
+    "Host-only manager can cancel then confirm revocation; mobile pairing and confirmation have no horizontal overflow",
+  );
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.getByRole("heading", { name: "Sign in to mic.sc", exact: true }).waitFor();
   NodeAssert.equal(await page.getByLabel("Prism routing strategy").count(), 0);

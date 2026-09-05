@@ -48,6 +48,19 @@ public struct PrismView: View {
         return controller
     }
 
+    private var gatewayState: String {
+        if stale { return "Unavailable" }
+        if identityConfiguration.enabled, let identity {
+            if identity.discovery?.service == nil { return "No host selected" }
+            if identity.session?.permissions.contains("prism:inference") != true {
+                return identity.session?.permissions.contains("prism:instances:manage") == true ? "Host management available" : "Inference access not granted"
+            }
+        }
+        if currentStatus?.state == "access-verified" { return "Access verified" }
+        if !connected { return "Offline" }
+        return currentStatus?.state ?? "Checking…"
+    }
+
     private var identityRoutingRead: Bool { identity?.session?.permissions.contains("prism:routing:read") == true }
     private var identityRoutingWrite: Bool {
         identityConfiguration.enabled && !stale && !pending && identityRoutingRead &&
@@ -84,9 +97,9 @@ public struct PrismView: View {
                     ForEach(environments) { environment in Text(environment.name).tag(environment.id) }
                 }
                 .disabled(login != nil || pending)
-                LabeledContent("Gateway", value: stale ? "Unavailable" : currentStatus?.state == "access-verified" ? "Access verified" : !connected ? "Offline" : currentStatus?.state ?? "Checking…")
+                LabeledContent("Gateway", value: gatewayState)
                 if (stale || !connected), let state = currentStatus?.state {
-                    Text("Last known state: \(state). Management is unavailable until the connection recovers.")
+                    Text(identityConfiguration.enabled ? "Last known state: \(state). Host recovery remains available with current mic.sc access." : "Last known state: \(state). Management is unavailable until the connection recovers.")
                         .foregroundStyle(.secondary)
                 }
                 if let role = currentStatus?.role { LabeledContent("Pool role", value: role) }
@@ -99,10 +112,15 @@ public struct PrismView: View {
             } header: { Text("Prism") }
 
             if identityConfiguration.enabled {
-                if let controller = (client as? any MicPrismThreadCapable)?.micPrismThreads, identity != nil {
+                if let identity, identity.session?.permissions.contains("prism:instances:manage") == true,
+                   let authorityURL = identityConfiguration.authorityUrl {
+                    MicPrismHostAdministrationView(client: client, environmentID: environmentID, authorityURL: authorityURL, identity: identity, refresh: { await load() })
+                        .id(environmentID + authorityURL + (identity.session?.subject ?? "") + (identityController?.clerk?.session?.id ?? ""))
+                }
+                if let controller = (client as? any MicPrismThreadCapable)?.micPrismThreads, identity?.session?.permissions.contains("prism:inference") == true {
                     MicPrismThreadView(controller: controller, client: client, environmentID: environmentID, authorityURL: identityConfiguration.authorityUrl, threads: threads.filter { $0.environmentID == environmentID })
                 }
-                if let identity, let service = identity.discovery?.service, currentStatus != nil {
+                if let identity, identity.session?.permissions.contains("prism:inference") == true, let service = identity.discovery?.service, currentStatus != nil {
                     MicPrismInferenceView(client: client, environmentID: environmentID, enabled: !stale, service: service, authorityUrl: identityConfiguration.authorityUrl)
                         .id(environmentID + (identityConfiguration.authorityUrl ?? "") + service.id + String(service.pairingRevision) + service.apiUrl + (service.inferenceUrl ?? "") + (identity.session?.subject ?? "") + (identityController?.clerk?.session?.id ?? ""))
                 }
@@ -263,6 +281,16 @@ public struct PrismView: View {
                 let nextIdentity = try await client.prism(PrismRequest("/identity/access"), environmentID: selected)
                 guard selected == environmentID, generation == loadGeneration, !Task.isCancelled else { return }
                 identity = nextIdentity
+                if nextIdentity.discovery?.service == nil || nextIdentity.session?.permissions.contains("prism:inference") != true {
+                    loadedEnvironmentID = selected; status = nil; session = nil; accounts = []; strategy = ""; stale = false
+                    errorMessage = nextIdentity.discovery?.service == nil ? "No Prism host is selected." : nil
+                    if let service = nextIdentity.discovery?.service, nextIdentity.session?.permissions.contains("prism:routing:read") == true {
+                        let routing = try await client.prism(PrismRequest("/routing", expectedService: service, identityAuthorityUrl: config.authorityUrl), environmentID: selected)
+                        guard selected == environmentID, generation == loadGeneration, !Task.isCancelled else { return }
+                        strategy = routing.strategy ?? ""
+                    }
+                    return
+                }
             } else { identity = nil }
             let nextStatus = try await client.prism(PrismRequest("/status"), environmentID: selected)
             let nextSession: AuthSessionState?

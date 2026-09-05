@@ -243,3 +243,17 @@ describe("mic.sc account-level Prism host administration", () => {
     }),
   );
 });
+
+it.effect("rejects revocation when fresh discovery differs from the confirmed selection", () =>
+  Effect.gen(function* () {
+    const h = harness(() => Response.json({}));
+    const error = yield* revokeMicPrismInstance({
+      ...h.input,
+      serviceInstanceId: "instance",
+      expectedPairingRevision: 2,
+      expectedSelectionRevision: 2,
+    }).pipe(Effect.provide(h.layer), Effect.flip);
+    expect(error).toMatchObject({ _tag: "MicPrismPairingError", reason: "conflict" });
+    expect(h.calls.some((call) => call.init.method === "POST")).toBe(false);
+  }),
+);

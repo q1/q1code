@@ -9,7 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
-import { getMicIdentityAccess } from "./micIdentityClient.ts";
+import { getMicIdentityAccess, getMicIdentityOverview } from "./micIdentityClient.ts";
 
 // Actual v1 contract shapes with synthetic identity, grants and pairing only.
 const session = {
@@ -286,6 +286,73 @@ describe("mic.sc identity transport", () => {
       expect(signInFailure).not.toHaveProperty("cause");
       expect(networkFailure).not.toHaveProperty("cause");
       expect(String(networkFailure)).not.toContain("fixture-private-token");
+    }),
+  );
+});
+
+describe("mic.sc permission-independent discovery", () => {
+  it.effect("shows an unpaired host to a host manager without granting inference", () =>
+    Effect.gen(function* () {
+      const server = capture((url) =>
+        Response.json(
+          url.endsWith("/identity")
+            ? { ...session, permissions: ["prism:instances:manage"] }
+            : { ...discovery, service: null },
+        ),
+      );
+      const overview = yield* getMicIdentityOverview(input).pipe(Effect.provide(server.layer));
+      expect(overview.discovery.service).toBeNull();
+      expect(overview.session.capabilities.inference).toBe(false);
+      const rejected = yield* getMicIdentityAccess(input).pipe(
+        Effect.provide(server.layer),
+        Effect.flip,
+      );
+      expect(rejected).toMatchObject({
+        _tag: "MicIdentityForbiddenError",
+        capability: "prism:inference",
+      });
+      expect(server.calls).toHaveLength(3);
+    }),
+  );
+  it.effect("allows an active identity with no service grants to see discovery", () =>
+    Effect.gen(function* () {
+      const server = capture((url) =>
+        Response.json(url.endsWith("/identity") ? { ...session, permissions: [] } : discovery),
+      );
+      const overview = yield* getMicIdentityOverview(input).pipe(Effect.provide(server.layer));
+      expect(overview.session.permissions).toEqual([]);
+      expect(overview.discovery.service?.id).toBe("prism-pc");
+    }),
+  );
+  it.effect("rejects an expired identity and does not fetch discovery", () =>
+    Effect.gen(function* () {
+      const server = capture(() => Response.json({ ...session, authorizationExpiresAt: 0 }));
+      const rejected = yield* getMicIdentityOverview(input).pipe(
+        Effect.provide(server.layer),
+        Effect.flip,
+      );
+      expect(rejected).toMatchObject({
+        _tag: "MicIdentityUnauthorizedError",
+        reason: "expired-session",
+      });
+      expect(server.calls).toHaveLength(1);
+    }),
+  );
+  it.effect("does not publish discovery after an account switch", () =>
+    Effect.gen(function* () {
+      let current = true;
+      const server = capture((url) => {
+        if (url.endsWith("/discovery")) current = false;
+        return Response.json(url.endsWith("/identity") ? session : discovery);
+      });
+      const rejected = yield* getMicIdentityOverview({ ...input, isCurrent: () => current }).pipe(
+        Effect.provide(server.layer),
+        Effect.flip,
+      );
+      expect(rejected).toMatchObject({
+        _tag: "MicIdentityUnauthorizedError",
+        reason: "revoked-session",
+      });
     }),
   );
 });

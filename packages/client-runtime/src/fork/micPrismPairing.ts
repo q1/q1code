@@ -38,7 +38,11 @@ export { MicPrismPairingError } from "@q1code/core/micPrismPairing";
 export type MicPrismPairingClientInput = Pick<
   MicIdentityClientInput,
   "baseUrl" | "getToken" | "timeoutMs"
-> & { readonly isCurrent: () => boolean };
+> & {
+  readonly isCurrent: () => boolean;
+  /** Dialog intent, checked against fresh discovery; never sent in a revoke body. */
+  readonly expectedSelectionRevision?: number;
+};
 export type MicPrismPairingClientError = MicIdentityClientError | MicPrismPairingError;
 const permission = "prism:instances:manage";
 const decodeChallengePayload = Schema.decodeUnknownEffect(
@@ -72,6 +76,11 @@ const call = Effect.fn("micPrismPairing.call")(
       permission,
       allowUnpaired: true,
     });
+    if (
+      input.expectedSelectionRevision !== undefined &&
+      input.expectedSelectionRevision !== access.discovery.selectionRevision
+    )
+      return yield* new MicPrismPairingError({ reason: "conflict" });
     const token = yield* resolveMicIdentityToken(input.getToken);
     yield* requireCurrentMicIdentity(input);
     yield* requireMicIdentityCapability(access.session, permission);

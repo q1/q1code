@@ -2,7 +2,7 @@ name: Fork identity browser QA
 
 on:
   pull_request:
-    branches: [fork]
+    branches: [fork, "feat/**"]
     paths:
       - "apps/web/**"
       - "packages/client-runtime/**"

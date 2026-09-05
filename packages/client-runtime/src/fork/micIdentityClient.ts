@@ -71,10 +71,9 @@ export const resolveMicIdentityToken = Effect.fn("resolveMicIdentityToken")(func
   return token;
 });
 
-/** Both the UI and server verify the authority's explicit grants and expiry. */
-export const requireMicIdentityCapability = Effect.fn("requireMicIdentityCapability")(function* (
+/** Discovery verifies identity freshness without granting any operation. */
+const requireActiveMicIdentity = Effect.fn("requireActiveMicIdentity")(function* (
   session: MicIdentitySession,
-  capability: MicPrismCapability | MicPrismPermission,
 ) {
   if (session.state !== "active") {
     return yield* new MicIdentityUnauthorizedError({ reason: "revoked-session" });
@@ -85,6 +84,14 @@ export const requireMicIdentityCapability = Effect.fn("requireMicIdentityCapabil
   ) {
     return yield* new MicIdentityUnauthorizedError({ reason: "expired-session" });
   }
+});
+
+/** Both the UI and server verify the authority's explicit grants and expiry. */
+export const requireMicIdentityCapability = Effect.fn("requireMicIdentityCapability")(function* (
+  session: MicIdentitySession,
+  capability: MicPrismCapability | MicPrismPermission,
+) {
+  yield* requireActiveMicIdentity(session);
   const permitted =
     capability === "inference" || capability === "manage" || capability === "accountDetails"
       ? session.capabilities[capability]
@@ -95,9 +102,9 @@ export const requireMicIdentityCapability = Effect.fn("requireMicIdentityCapabil
 });
 
 /** No stored authorization, retries, redirect following, or provider credentials. */
-export const getMicIdentityAccess = Effect.fn("getMicIdentityAccess")(
+const readMicIdentityAccess = Effect.fn("readMicIdentityAccess")(
   function* (
-    input: MicIdentityClientInput,
+    input: MicIdentityClientInput & { readonly overview?: boolean },
   ): Effect.fn.Return<
     { readonly session: MicIdentitySession; readonly discovery: MicPrismDiscovery },
     MicIdentityClientError,
@@ -110,6 +117,7 @@ export const getMicIdentityAccess = Effect.fn("getMicIdentityAccess")(
     const token = yield* resolveMicIdentityToken(input.getToken);
     yield* requireCurrentMicIdentity(input);
     const client = yield* HttpClient.HttpClient;
+    const overview = input.overview === true;
     const capability = input.permission ?? input.capability ?? "prism:inference";
 
     const read = <S extends Schema.Constraint & Schema.Decoder<unknown, never>>(
@@ -146,7 +154,9 @@ export const getMicIdentityAccess = Effect.fn("getMicIdentityAccess")(
       const session = normalizeMicIdentity(
         yield* read(MIC_IDENTITY_API_PATHS.session, MicIdentityWire),
       );
-      yield* requireMicIdentityCapability(session, capability);
+      yield* overview
+        ? requireActiveMicIdentity(session)
+        : requireMicIdentityCapability(session, capability);
       const discovery = normalizeMicPrismDiscovery(
         yield* read(MIC_IDENTITY_API_PATHS.prismService, MicPrismDiscoveryWire),
       );
@@ -168,7 +178,9 @@ export const getMicIdentityAccess = Effect.fn("getMicIdentityAccess")(
         return yield* new MicIdentityUnavailableError({ reason: "revoked-service" });
       }
       // A slow discovery call cannot extend the authority's expiry.
-      yield* requireMicIdentityCapability(session, capability);
+      yield* overview
+        ? requireActiveMicIdentity(session)
+        : requireMicIdentityCapability(session, capability);
       return { session, discovery };
     }).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, {
@@ -186,3 +198,12 @@ export const getMicIdentityAccess = Effect.fn("getMicIdentityAccess")(
       }),
     ),
 );
+
+/** Operation access still defaults to inference and requires a paired host. */
+export const getMicIdentityAccess = (input: MicIdentityClientInput) =>
+  readMicIdentityAccess({ ...input, overview: false });
+
+/** Public discovery is independent of inference, routing and host-management grants. */
+export const getMicIdentityOverview = (
+  input: Pick<MicIdentityClientInput, "baseUrl" | "getToken" | "isCurrent" | "timeoutMs">,
+) => readMicIdentityAccess({ ...input, allowUnpaired: true, overview: true });

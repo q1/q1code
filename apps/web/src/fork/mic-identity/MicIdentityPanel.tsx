@@ -3,6 +3,7 @@ import { CheckIcon, CloudOffIcon, LogInIcon, ShieldCheckIcon, ServerIcon } from 
 import * as Effect from "effect/Effect";
 import {
   getMicIdentityAccess,
+  getMicIdentityOverview,
   getMicPrismStatus,
   getMicPrismRouting,
   setMicPrismRouting,
@@ -43,6 +44,7 @@ export function MicIdentityPanel() {
   const [view, setView] = useState<View | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [accessRevision, setAccessRevision] = useState(0);
   const [saved, setSaved] = useState<View | null>(null);
   const operation = useRef(0);
   const mutating = useRef(false);
@@ -72,13 +74,21 @@ export function MicIdentityPanel() {
               getToken: readMicIdentityToken,
               isCurrent: () => micIdentityGeneration() === generation,
             };
-            const access = yield* getMicIdentityAccess({ ...input, allowUnpaired: true });
-            if (!access.discovery.service) return { access, routing: null };
-            yield* getMicPrismStatus(input);
-            const routing = access.session.permissions.includes("prism:routing:read")
-              ? (yield* getMicPrismRouting(input)).strategy
-              : null;
-            return { access, routing };
+            const access = yield* getMicIdentityOverview(input);
+            if (!access.discovery.service) return { access, routing: null, gatewayError: null };
+            const bound = { ...input, expectedService: access.discovery.service };
+            const gateway = yield* Effect.gen(function* () {
+              if (access.session.permissions.includes("prism:inference"))
+                yield* getMicPrismStatus(bound);
+              return access.session.permissions.includes("prism:routing:read")
+                ? (yield* getMicPrismRouting(bound)).strategy
+                : null;
+            }).pipe(Effect.result);
+            return {
+              access,
+              routing: gateway._tag === "Success" ? gateway.success : null,
+              gatewayError: gateway._tag === "Failure" ? gateway.failure.message : null,
+            };
           }).pipe(Effect.result),
           { signal: controller.signal },
         );
@@ -91,7 +101,7 @@ export function MicIdentityPanel() {
           )
             setView(null);
         } else {
-          setError(null);
+          setError(result.success.gatewayError);
           setView({ ...result.success, authorityUrl, generation, receivedAt: Date.now() });
         }
       } catch {
@@ -108,7 +118,7 @@ export function MicIdentityPanel() {
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [config?.authorityUrl, generation, session.status, visible, revision]);
+  }, [config?.authorityUrl, generation, session.status, visible, revision, accessRevision]);
 
   const changeRouting = async (strategy: PrismRoutingStrategy) => {
     if (
@@ -134,7 +144,10 @@ export function MicIdentityPanel() {
             getToken: readMicIdentityToken,
             isCurrent: () => micIdentityGeneration() === generation,
           };
-          const access = yield* getMicIdentityAccess(input);
+          const access = yield* getMicIdentityAccess({
+            ...input,
+            permission: "prism:routing:write",
+          });
           if (
             access.discovery.service?.id !== target.id ||
             access.discovery.service.pairingRevision !== target.pairingRevision
@@ -241,7 +254,7 @@ export function MicIdentityPanel() {
                 </div>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
                   {error
-                    ? "Showing the last verified host. Changes and new requests are paused."
+                    ? "Showing the last verified host. Inference and routing are paused; administrators can recover the host."
                     : service
                       ? "Your mic.sc session is authorized for this host."
                       : "You're signed in. A Prism administrator needs to pair and select a host before you can send requests."}
@@ -254,10 +267,14 @@ export function MicIdentityPanel() {
                         (permission) => permission !== "prism:inference",
                       )
                     ? "Scoped access"
-                    : "Inference access"}
+                    : current.access.session.permissions.includes("prism:inference")
+                      ? "Inference access"
+                      : "No service permissions"}
               </span>
             </div>
-            {service && config?.authorityUrl ? (
+            {service &&
+            config?.authorityUrl &&
+            current.access.session.permissions.includes("prism:inference") ? (
               <MicPrismChat
                 key={`${config.authorityUrl}:${generation}:${service.id}:${service.pairingRevision}:${service.inferenceUrl}`}
                 authorityUrl={config.authorityUrl}
@@ -317,7 +334,7 @@ export function MicIdentityPanel() {
                 authorityUrl={config.authorityUrl}
                 generation={generation}
                 access={current.access}
-                onChanged={retry}
+                onChanged={() => setAccessRevision((value) => value + 1)}
               />
             ) : null}
             {current.access.session.capabilities.accountDetails ? (

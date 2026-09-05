@@ -10,7 +10,10 @@ import { environmentSession } from "../../state/session";
 import { useThreadShells } from "../../state/entities";
 import { MicPrismThreadBridgeContext } from "./PersistentMicPrismIdentity";
 
-export function MicPrismThreadSection(props: { readonly environmentId: EnvironmentId }) {
+export function MicPrismThreadSection(props: {
+  readonly environmentId: EnvironmentId;
+  readonly canInfer: boolean;
+}) {
   const bridge = useContext(MicPrismThreadBridgeContext);
   const session = useAtomValue(environmentSession.sessionStateAtom(props.environmentId));
   const access = Option.getOrNull(AsyncResult.value(session));
@@ -20,16 +23,20 @@ export function MicPrismThreadSection(props: { readonly environmentId: Environme
     access.scopes?.includes("orchestration:read");
   const canOperate = canRead && access?.scopes?.includes("orchestration:operate");
   const threads = useThreadShells().filter(
-    (thread) => canRead && thread.environmentId === props.environmentId && !thread.archivedAt,
+    (thread) =>
+      canRead &&
+      thread.environmentId === props.environmentId &&
+      !thread.archivedAt &&
+      (props.canInfer || bridge?.bindings.has(`${props.environmentId}/${thread.id}`)),
   );
   const [selected, setSelected] = useState<string | null>(null);
   const [choosing, setChoosing] = useState(false);
   const [busy, setBusy] = useState(false);
-  if (!bridge) return null;
+  if (!bridge || (!props.canInfer && threads.length === 0)) return null;
   const thread = threads.find((thread) => thread.id === selected);
   const binding = selected ? bridge.bindings.get(`${props.environmentId}/${selected}`) : undefined;
   const change = async () => {
-    if (!thread || busy || !canOperate) return;
+    if (!thread || busy || !canOperate || (!binding && !props.canInfer)) return;
     setBusy(true);
     try {
       if (binding) await bridge.disconnect(props.environmentId, thread.id);
@@ -57,7 +64,9 @@ export function MicPrismThreadSection(props: { readonly environmentId: Environme
         </Pressable>
         <Pressable
           accessibilityRole="button"
-          disabled={busy || !thread || !canOperate || (!binding && !bridge.active)}
+          disabled={
+            busy || !thread || !canOperate || (!binding && (!bridge.active || !props.canInfer))
+          }
           onPress={() => void change()}
           className="self-start rounded-full bg-subtle px-4 py-2"
         >
