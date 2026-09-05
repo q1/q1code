@@ -2,6 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { MIC_IDENTITY_SESSION_HEADER } from "@q1code/core/micIdentity";
 
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import { ManagedRelayDpopSigner, type ManagedRelayDpopProofInput } from "../relay/managedRelay.ts";
@@ -13,6 +14,7 @@ import {
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import {
   deletePrismAccount,
+  getPrismIdentityConfig,
   getPrismStatus,
   listPrismAccounts,
   patchPrismAccount,
@@ -46,6 +48,66 @@ const capture = (respond: (url: string, init: RequestInit) => Response) => {
 };
 
 describe("prismClient", () => {
+  it.effect("bootstraps sign-in through environment auth without requesting a human token", () =>
+    Effect.gen(function* () {
+      const server = capture(() =>
+        Response.json({ enabled: true, clerkPublishableKey: "pk_test_fixture" }),
+      );
+      const config = yield* getPrismIdentityConfig({
+        prepared: prepared({ _tag: "Bearer", token: "environment-token" }),
+        signer: Option.none(),
+        micScToken: () => Effect.die("Sign-in bootstrap must not request a token"),
+      }).pipe(Effect.provide(server.layer));
+      expect(config.enabled).toBe(true);
+      expect(server.calls[0]?.url).toBe(
+        "https://environment.example.test/api/fork/prism/identity/config",
+      );
+      const headers = new Headers(server.calls[0]?.init.headers);
+      expect(headers.get("authorization")).toBe("Bearer environment-token");
+      expect(headers.has(MIC_IDENTITY_SESSION_HEADER)).toBe(false);
+    }),
+  );
+
+  it.effect("adds current mic.sc identity without replacing environment auth or cookies", () =>
+    Effect.gen(function* () {
+      let tokenNumber = 0;
+      const server = capture(() => Response.json({ state: "ready", port: 8317, role: "primary" }));
+      const operation = (authorization: PreparedConnection["httpAuthorization"]) =>
+        getPrismStatus({
+          prepared: prepared(authorization),
+          signer: Option.none(),
+          micScToken: () => Effect.sync(() => `fixture-mic-token-${++tokenNumber}`),
+        }).pipe(Effect.provide(server.layer));
+      yield* operation({ _tag: "Bearer", token: "environment-token" });
+      yield* operation(null);
+      expect(new Headers(server.calls[0]?.init.headers).get("authorization")).toBe(
+        "Bearer environment-token",
+      );
+      expect(server.calls[1]?.init.credentials).toBe("include");
+      expect(
+        server.calls.map((call) => new Headers(call.init.headers).get(MIC_IDENTITY_SESSION_HEADER)),
+      ).toEqual(["fixture-mic-token-1", "fixture-mic-token-2"]);
+      expect(server.calls.map((call) => call.init.redirect)).toEqual(["error", "error"]);
+    }),
+  );
+
+  it.effect("rejects signed-out identity before a mutation reaches the environment", () =>
+    Effect.gen(function* () {
+      const server = capture(() => Response.json({ ok: true }));
+      const failure = yield* deletePrismAccount({
+        prepared: prepared(null),
+        signer: Option.none(),
+        id: "fixture.json",
+        micScToken: () => Effect.succeed(null),
+      }).pipe(Effect.provide(server.layer), Effect.flip);
+      expect(failure).toMatchObject({
+        _tag: "MicIdentityUnauthorizedError",
+        reason: "sign-in-required",
+      });
+      expect(server.calls).toHaveLength(0);
+    }),
+  );
+
   it.effect("reads status with the bearer credential and decodes the body", () =>
     Effect.gen(function* () {
       const server = capture(() =>
@@ -265,6 +327,80 @@ describe("Prism relay credential renewal", () => {
       expect(error._tag).toBe("EnvironmentAuthInvalidError");
       expect(h.calls).toHaveLength(2);
       expect(h.rejected).toEqual([undefined, "current-token"]);
+    }),
+  );
+
+  it.effect(
+    "renews both request credentials while retaining the current origin and DPoP proof",
+    () =>
+      Effect.gen(function* () {
+        let tokenNumber = 0;
+        const h = harness((url) =>
+          url.startsWith("https://current.")
+            ? unauthorized()
+            : Response.json({ state: "ready", port: 8317, role: "primary" }),
+        );
+        yield* getPrismStatus({
+          ...h.input,
+          micScToken: () => Effect.sync(() => `fixture-mic-token-${++tokenNumber}`),
+        }).pipe(
+          Effect.provideService(RemoteEnvironmentAuthorization, h.authorization),
+          Effect.provide(h.layer),
+        );
+        expect(
+          h.calls.map((call) => new Headers(call.init.headers).get(MIC_IDENTITY_SESSION_HEADER)),
+        ).toEqual(["fixture-mic-token-1", "fixture-mic-token-2"]);
+        expect(h.calls.map((call) => new Headers(call.init.headers).get("authorization"))).toEqual([
+          "DPoP current-token",
+          "DPoP renewed-token",
+        ]);
+        expect(h.proofs.map((proof) => proof.url)).toEqual(h.calls.map((call) => call.url));
+      }),
+  );
+
+  it.effect("does not replay a mutation when mic.sc revokes the human session", () =>
+    Effect.gen(function* () {
+      const h = harness(() =>
+        Response.json(
+          { _tag: "MicIdentityUnauthorizedError", reason: "revoked-session" },
+          { status: 401 },
+        ),
+      );
+      const failure = yield* deletePrismAccount({
+        ...h.input,
+        id: "fixture.json",
+        micScToken: () => Effect.succeed("fixture-mic-token"),
+      }).pipe(
+        Effect.provideService(RemoteEnvironmentAuthorization, h.authorization),
+        Effect.provide(h.layer),
+        Effect.flip,
+      );
+      expect(failure).toMatchObject({
+        _tag: "MicIdentityUnauthorizedError",
+        reason: "revoked-session",
+      });
+      expect(h.calls).toHaveLength(1);
+      expect(h.rejected).toEqual([undefined]);
+    }),
+  );
+
+  it.effect("does not expose a mic.sc token in transport failures", () =>
+    Effect.gen(function* () {
+      const h = harness(() => {
+        throw new Error("fixture-mic-token");
+      });
+      const failure = yield* getPrismStatus({
+        ...h.input,
+        micScToken: () => Effect.succeed("fixture-mic-token"),
+      }).pipe(
+        Effect.provideService(RemoteEnvironmentAuthorization, h.authorization),
+        Effect.provide(h.layer),
+        Effect.flip,
+      );
+      expect(failure).toMatchObject({ _tag: "MicIdentityUnavailableError", reason: "transport" });
+      expect(failure).not.toHaveProperty("cause");
+      expect(String(failure)).not.toContain("fixture-mic-token");
+      expect(h.calls).toHaveLength(1);
     }),
   );
 });

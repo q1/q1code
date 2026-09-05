@@ -28,6 +28,9 @@ import {
 } from "@q1code/core/prismApi";
 import { PrismRoutingStrategy } from "@q1code/core/config";
 import { AuthAccessWriteScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
+import type { MicIdentityAccess } from "@q1code/core/micIdentityApi";
+import { MIC_IDENTITY_SESSION_HEADER, MicIdentityUnavailableError } from "@q1code/core/micIdentity";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -38,6 +41,9 @@ import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClientResponse } from "effect/unstable/http";
+import * as Headers from "effect/unstable/http/Headers";
+import * as HttpEffect from "effect/unstable/http/HttpEffect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import {
@@ -52,6 +58,16 @@ import * as ForkFlags from "../ForkFlags.ts";
 import { prismAuthsDir, prismDirectories } from "./PrismConfig.ts";
 import * as Prism from "./PrismService.ts";
 import * as PrismSync from "./PrismSync.ts";
+import {
+  micIdentityPublicConfig,
+  requireMicIdentity,
+  requirePairedPrismTarget,
+} from "../mic-identity/MicIdentityAccess.ts";
+
+const CurrentMicIdentityAccess = Context.Reference<MicIdentityAccess | undefined>(
+  "q1code/CurrentMicIdentityAccess",
+  { defaultValue: () => undefined },
+);
 
 /** What we read from the sidecar; everything else it returns is ignored. */
 const AuthFileEntry = Schema.Struct({
@@ -354,55 +370,123 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
       ),
     );
 
-    const withRead = <A, E, R>(name: string, body: Effect.Effect<A, E, R>) =>
-      annotateEnvironmentRequest(name).pipe(
-        Effect.andThen(requireEnvironmentScope(AuthOrchestrationReadScope)),
-        Effect.andThen(body),
-      );
-
-    const withWrite = <A, E, R>(name: string, body: Effect.Effect<A, E, R>) =>
-      annotateEnvironmentRequest(name).pipe(
-        Effect.andThen(requireEnvironmentScope(AuthAccessWriteScope)),
-        Effect.andThen(body),
-      );
-
-    /** The proxy status plus the sync status, in the wire shape. */
-    const fullStatus = (status: Prism.PrismStatus) =>
-      sync.status.pipe(
-        Effect.map(
-          (syncStatus) =>
-            ({
-              state: status.state,
-              port: status.port,
-              ...(status.version !== undefined ? { version: status.version } : {}),
-              role: syncStatus.role,
-              ...(syncStatus.lastSyncAt !== undefined ? { lastSyncAt: syncStatus.lastSyncAt } : {}),
-              ...(syncStatus.lastSyncError !== undefined
-                ? { lastSyncError: syncStatus.lastSyncError }
-                : {}),
-              mode: status.mode,
-              ...(status.baseUrl !== undefined ? { baseUrl: status.baseUrl } : {}),
-              ...(status.lastError !== undefined ? { lastError: status.lastError } : {}),
-              restarts: status.restarts,
-              since: status.since,
-              usageSource: status.usageSource,
-            }) satisfies PrismStatus,
+    const privateResponse = HttpEffect.appendPreResponseHandler((_request, response) =>
+      Effect.succeed(HttpServerResponse.setHeader(response, "cache-control", "no-store")),
+    );
+    const withAccess = <A, E, R>(name: string, body: Effect.Effect<A, E, R>, write: boolean) =>
+      Effect.gen(function* () {
+        yield* annotateEnvironmentRequest(name);
+        const identityEnabled = (yield* flags.current)["mic-identity"];
+        yield* requireEnvironmentScope(
+          write && !identityEnabled ? AuthAccessWriteScope : AuthOrchestrationReadScope,
+        );
+        yield* privateResponse;
+        const permission =
+          name === "status"
+            ? "prism:inference"
+            : name === "getRouting"
+              ? "prism:routing:read"
+              : name === "setRouting"
+                ? "prism:routing:write"
+                : write
+                  ? "prism:accounts:write"
+                  : "prism:accounts:read";
+        const access = yield* requireMicIdentity(permission).pipe(
+          Effect.provideService(ForkFlags.ForkFlagsService, flags),
+        );
+        const localOperation = ["restart", "setUsageSource", "syncExport", "syncPush"].includes(
+          name,
+        );
+        if (write && (!access || localOperation))
+          yield* requireEnvironmentScope(AuthAccessWriteScope);
+        if (access && name !== "status")
+          return yield* new MicIdentityUnavailableError({ reason: "unsupported-operation" });
+        if (access)
+          yield* requirePairedPrismTarget(access.discovery.service!.apiUrl).pipe(
+            Effect.provideService(ForkFlags.ForkFlagsService, flags),
+          );
+        return yield* body.pipe(Effect.provideService(CurrentMicIdentityAccess, access));
+      }).pipe(
+        Effect.provideServiceEffect(
+          Headers.CurrentRedactedNames,
+          Effect.map(Headers.CurrentRedactedNames, (names) => [
+            ...names,
+            MIC_IDENTITY_SESSION_HEADER,
+          ]),
         ),
       );
 
+    const withRead = <A, E, R>(name: string, body: Effect.Effect<A, E, R>) =>
+      withAccess(name, body, false);
+    const withWrite = <A, E, R>(name: string, body: Effect.Effect<A, E, R>) =>
+      withAccess(name, body, true);
+
+    /** The proxy status plus the sync status, in the wire shape. */
+    const fullStatus = (status: Prism.PrismStatus) =>
+      Effect.gen(function* () {
+        const syncStatus = yield* sync.status;
+        const identity = yield* CurrentMicIdentityAccess;
+        if (identity && !identity.session.capabilities.accountDetails) {
+          return {
+            state: status.state,
+            port: 0,
+            role: "standalone" as const,
+            capabilities: identity.session.capabilities,
+          } satisfies PrismStatus;
+        }
+        return {
+          state: status.state,
+          port: status.port,
+          ...(status.version !== undefined ? { version: status.version } : {}),
+          role: syncStatus.role,
+          ...(syncStatus.lastSyncAt !== undefined ? { lastSyncAt: syncStatus.lastSyncAt } : {}),
+          ...(syncStatus.lastSyncError !== undefined
+            ? { lastSyncError: syncStatus.lastSyncError }
+            : {}),
+          mode: status.mode,
+          ...(status.baseUrl !== undefined ? { baseUrl: status.baseUrl } : {}),
+          ...(status.lastError !== undefined ? { lastError: status.lastError } : {}),
+          restarts: status.restarts,
+          since: status.since,
+          usageSource: status.usageSource,
+          ...(identity ? { capabilities: identity.session.capabilities } : {}),
+        } satisfies PrismStatus;
+      });
+
     return handlers
-      .handle("status", (args) =>
-        withRead(args.endpoint.name, proxy.status.pipe(Effect.flatMap(fullStatus))),
+      .handle("identityConfig", () =>
+        annotateEnvironmentRequest("identityConfig").pipe(
+          Effect.andThen(requireEnvironmentScope(AuthOrchestrationReadScope)),
+          Effect.andThen(privateResponse),
+          Effect.andThen(
+            micIdentityPublicConfig.pipe(Effect.provideService(ForkFlags.ForkFlagsService, flags)),
+          ),
+        ),
       )
-      .handle("restart", (args) =>
+      .handle("identityAccess", () =>
+        annotateEnvironmentRequest("identityAccess").pipe(
+          Effect.andThen(requireEnvironmentScope(AuthOrchestrationReadScope)),
+          Effect.andThen(privateResponse),
+          Effect.andThen(
+            requireMicIdentity().pipe(Effect.provideService(ForkFlags.ForkFlagsService, flags)),
+          ),
+          Effect.flatMap((access) =>
+            access
+              ? Effect.succeed(access)
+              : Effect.fail(new MicIdentityUnavailableError({ reason: "configuration" })),
+          ),
+        ),
+      )
+      .handle("status", () => withRead("status", proxy.status.pipe(Effect.flatMap(fullStatus))))
+      .handle("restart", () =>
         withWrite(
-          args.endpoint.name,
+          "restart",
           requireFlag.pipe(Effect.andThen(proxy.restart), Effect.flatMap(fullStatus)),
         ),
       )
       .handle("setUsageSource", (args) =>
         withWrite(
-          args.endpoint.name,
+          "setUsageSource",
           requireFlag.pipe(
             Effect.andThen(persistPrismSection({ usageSource: args.payload.enabled })),
             Effect.andThen(proxy.reloadUsageSource),
@@ -410,9 +494,9 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
           ),
         ),
       )
-      .handle("listAccounts", (args) =>
+      .handle("listAccounts", () =>
         withRead(
-          args.endpoint.name,
+          "listAccounts",
           requireReady.pipe(
             Effect.andThen(listAccounts),
             Effect.map((accounts) => ({ accounts })),
@@ -421,7 +505,7 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
       )
       .handle("startLogin", (args) =>
         withWrite(
-          args.endpoint.name,
+          "startLogin",
           Effect.gen(function* () {
             yield* requireReady;
             yield* requireAccountOwner;
@@ -445,13 +529,13 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
       )
       .handle("loginStatus", (args) =>
         withRead(
-          args.endpoint.name,
+          "loginStatus",
           requireReady.pipe(Effect.andThen(loginStatus(args.params.sessionId))),
         ),
       )
       .handle("loginCallback", (args) =>
         withWrite(
-          args.endpoint.name,
+          "loginCallback",
           Effect.gen(function* () {
             yield* requireReady;
             yield* requireAccountOwner;
@@ -469,7 +553,7 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
       )
       .handle("cancelLogin", (args) =>
         withWrite(
-          args.endpoint.name,
+          "cancelLogin",
           Effect.gen(function* () {
             yield* requireReady;
             yield* requireAccountOwner;
@@ -489,7 +573,7 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
       )
       .handle("patchAccount", (args) =>
         withWrite(
-          args.endpoint.name,
+          "patchAccount",
           Effect.gen(function* () {
             yield* requireReady;
             yield* requireAccountOwner;
@@ -515,7 +599,7 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
       )
       .handle("deleteAccount", (args) =>
         withWrite(
-          args.endpoint.name,
+          "deleteAccount",
           Effect.gen(function* () {
             yield* requireReady;
             yield* requireAccountOwner;
@@ -536,12 +620,12 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
           }),
         ),
       )
-      .handle("getRouting", (args) =>
-        withRead(args.endpoint.name, requireReady.pipe(Effect.andThen(getRouting))),
+      .handle("getRouting", () =>
+        withRead("getRouting", requireReady.pipe(Effect.andThen(getRouting))),
       )
       .handle("setRouting", (args) =>
         withWrite(
-          args.endpoint.name,
+          "setRouting",
           requireReady.pipe(
             Effect.andThen(
               call(Ignored, "/routing/strategy", json("PUT", { value: args.payload.strategy })),
@@ -551,9 +635,9 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
           ),
         ),
       )
-      .handle("getUsage", (args) =>
+      .handle("getUsage", () =>
         withRead(
-          args.endpoint.name,
+          "getUsage",
           requireReady.pipe(
             Effect.andThen(call(UsageResponse, "/api-key-usage")),
             Effect.map((usage): PrismUsage =>
@@ -576,9 +660,9 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
           ),
         ),
       )
-      .handle("syncExport", (args) =>
+      .handle("syncExport", () =>
         withWrite(
-          args.endpoint.name,
+          "syncExport",
           requireFlag.pipe(
             Effect.andThen(sync.exportBundle),
             Effect.catchTag("PrismSyncNotConfigured", () => unavailable("sync-not-configured")),
@@ -587,14 +671,14 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
       )
       .handle("syncPush", (args) =>
         withWrite(
-          args.endpoint.name,
+          "syncPush",
           requireFlag.pipe(
             Effect.andThen(sync.applyPush(args.payload.entries, args.payload.tombstones ?? [])),
             Effect.catchTag("PrismSyncNotConfigured", () => unavailable("sync-not-configured")),
           ),
         ),
       )
-      .handle("syncStatus", (args) => withRead(args.endpoint.name, sync.status));
+      .handle("syncStatus", () => withRead("syncStatus", sync.status));
   }),
 );
 

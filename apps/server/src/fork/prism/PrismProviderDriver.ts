@@ -11,7 +11,12 @@ import type { ProviderDriver } from "../../provider/ProviderDriver.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { ServerConfig } from "../../config.ts";
 import { materializeCodexProxyHome } from "./CodexProxyHome.ts";
-import { currentPrismEndpoint, isPrismEnabled, prismEndpointChanges } from "./PrismEnvironment.ts";
+import {
+  currentPrismEndpoint,
+  isPrismEnabled,
+  isPrismIdentityRequired,
+  prismEndpointChanges,
+} from "./PrismEnvironment.ts";
 import { withPrismRouteOption } from "./PrismRouting.ts";
 import { makePrismRoutedAdapter } from "./PrismRoutedAdapter.ts";
 
@@ -36,6 +41,14 @@ export const withPrismProvider = <Config extends { readonly homePath: string }, 
       const proxy = () =>
         lock.withPermits(1)(
           Effect.gen(function* () {
+            if (isPrismIdentityRequired()) {
+              return yield* new ProviderAdapterRequestError({
+                provider: driver.driverKind,
+                method: "prism.setup",
+                detail:
+                  "Prism authorization required: mic.sc inference credentials are not available for this provider session.",
+              });
+            }
             const endpoint = currentPrismEndpoint();
             if (!endpoint) return undefined;
             if (cached?.baseUrl === endpoint.baseUrl && cached.apiKey === endpoint.apiKey)
@@ -73,13 +86,14 @@ export const withPrismProvider = <Config extends { readonly homePath: string }, 
             return instance.adapter;
           }).pipe(
             Effect.provide(context),
-            Effect.mapError(
-              () =>
-                new ProviderAdapterRequestError({
-                  provider: driver.driverKind,
-                  method: "prism.setup",
-                  detail: "Could not prepare the Prism provider connection.",
-                }),
+            Effect.mapError((error) =>
+              error._tag === "ProviderAdapterRequestError"
+                ? error
+                : new ProviderAdapterRequestError({
+                    provider: driver.driverKind,
+                    method: "prism.setup",
+                    detail: "Could not prepare the Prism provider connection.",
+                  }),
             ),
           ),
         );

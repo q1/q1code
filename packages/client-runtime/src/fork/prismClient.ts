@@ -52,9 +52,15 @@ import {
   type PrismUsage,
 } from "@q1code/core/prismApi";
 import type { PrismRoutingStrategy } from "@q1code/core/config";
+import type { MicIdentityAccess, MicIdentityPublicConfig } from "@q1code/core/micIdentityApi";
+import {
+  MIC_IDENTITY_SESSION_HEADER,
+  MicIdentityUnavailableError,
+  type MicIdentityClientError,
+} from "@q1code/core/micIdentity";
 import * as Effect from "effect/Effect";
-import type * as Option from "effect/Option";
-import type { HttpClient, HttpMethod } from "effect/unstable/http";
+import * as Option from "effect/Option";
+import { FetchHttpClient, Headers, type HttpClient, type HttpMethod } from "effect/unstable/http";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
@@ -62,6 +68,7 @@ import type { PreparedConnection } from "../connection/model.ts";
 import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
+import { resolveMicIdentityToken, type MicIdentityTokenSource } from "./micIdentityClient.ts";
 
 export type {
   PrismAccount,
@@ -82,6 +89,8 @@ export interface PrismClientInput {
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
   readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly timeoutMs?: number;
+  /** Additional human authorization; environment bearer/DPoP/cookies remain required. */
+  readonly micScToken?: MicIdentityTokenSource;
 }
 
 type DeclaredError =
@@ -89,7 +98,8 @@ type DeclaredError =
   | PrismUpstreamError
   | PrismNotFoundError
   | PrismConfigError
-  | PrismSyncFailedError;
+  | PrismSyncFailedError
+  | MicIdentityClientError;
 
 export type PrismClientError = DeclaredError | RemoteEnvironmentRequestError;
 
@@ -102,6 +112,9 @@ const DECLARED_TAGS = new Set([
   "PrismNotFoundError",
   "PrismConfigError",
   "PrismSyncFailedError",
+  "MicIdentityUnauthorizedError",
+  "MicIdentityForbiddenError",
+  "MicIdentityUnavailableError",
 ]);
 
 const isDeclaredError = (error: unknown): error is DeclaredError =>
@@ -128,13 +141,18 @@ const call = <A, E, R>(
   endpoint: string & keyof Api["prism"],
   request: (
     client: Api,
-    headers: { readonly authorization?: string; readonly dpop?: string },
+    headers: {
+      readonly authorization?: string;
+      readonly dpop?: string;
+      readonly "x-mic-sc-session"?: string;
+    },
   ) => Effect.Effect<A, E, R>,
   params?: Record<string, string>,
 ): Effect.Effect<A, PrismClientError, R | HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const remoteAuthorization =
       input.remoteAuthorization ?? (yield* Effect.serviceOption(RemoteEnvironmentAuthorization));
+    const redactedHeaders = yield* Headers.CurrentRedactedNames;
     // Upstream may refresh the relay origin without replacing the prepared socket.
     // Build the fork client from the same origin used for each request's proof.
     let currentBaseUrl = input.prepared.httpBaseUrl;
@@ -157,17 +175,51 @@ const call = <A, E, R>(
       },
       request: ({ headers }) =>
         Effect.gen(function* () {
+          const micToken =
+            input.micScToken === undefined
+              ? undefined
+              : yield* resolveMicIdentityToken(input.micScToken);
           const client = yield* HttpApiClient.make(PrismHttpApi, { baseUrl: currentBaseUrl });
-          return yield* request(client, headers).pipe(
-            Effect.map((value): Outcome<A> => ({ _tag: "ok", value })),
-            Effect.catch((error) =>
-              isDeclaredError(error)
-                ? Effect.succeed<Outcome<A>>({ _tag: "declared", error })
-                : Effect.fail(error),
-            ),
+          const operation = request(
+            client,
+            micToken === undefined
+              ? headers
+              : { ...headers, [MIC_IDENTITY_SESSION_HEADER]: micToken },
           );
-        }),
-    });
+          const requestInit = Option.getOrElse(
+            yield* Effect.serviceOption(FetchHttpClient.RequestInit),
+            () => ({}),
+          );
+          return yield* micToken === undefined
+            ? operation
+            : operation.pipe(
+                Effect.provideService(FetchHttpClient.RequestInit, {
+                  ...requestInit,
+                  redirect: "error",
+                  cache: "no-store",
+                }),
+              );
+        }).pipe(
+          Effect.map((value): Outcome<A> => ({ _tag: "ok", value })),
+          Effect.catch((error) =>
+            isDeclaredError(error)
+              ? Effect.succeed<Outcome<A>>({ _tag: "declared", error })
+              : Effect.fail(error),
+          ),
+        ),
+    }).pipe(
+      Effect.provideService(Headers.CurrentRedactedNames, [
+        ...redactedHeaders,
+        MIC_IDENTITY_SESSION_HEADER,
+      ]),
+      // Effect transport errors retain request headers. Do not put a human
+      // session token into a UI error, log, or serialized failure cause.
+      Effect.mapError((error) =>
+        input.micScToken === undefined
+          ? error
+          : new MicIdentityUnavailableError({ reason: "transport" }),
+      ),
+    );
     if (outcome._tag === "ok") return outcome.value;
     return yield* outcome.error;
   });
@@ -176,6 +228,23 @@ export const getPrismStatus = (
   input: PrismClientInput,
 ): Effect.Effect<PrismStatus, PrismClientError, HttpClient.HttpClient> =>
   call(input, "GET", "status", (client, headers) => client.prism.status({ headers }));
+
+/** Sign-in bootstrap still requires environment access, but not a human session. */
+export const getPrismIdentityConfig = (
+  input: PrismClientInput,
+): Effect.Effect<MicIdentityPublicConfig, PrismClientError, HttpClient.HttpClient> => {
+  const { micScToken: _micScToken, ...environmentInput } = input;
+  return call(environmentInput, "GET", "identityConfig", (client, headers) =>
+    client.prism.identityConfig({ headers }),
+  );
+};
+
+export const getPrismIdentityAccess = (
+  input: PrismClientInput,
+): Effect.Effect<MicIdentityAccess, PrismClientError, HttpClient.HttpClient> =>
+  call(input, "GET", "identityAccess", (client, headers) =>
+    client.prism.identityAccess({ headers }),
+  );
 
 /** Turn the Limits-view publication of Prism's accounts on or off; answers with the status (`usageSource` reflects the new value). */
 export const setPrismUsageSource = (

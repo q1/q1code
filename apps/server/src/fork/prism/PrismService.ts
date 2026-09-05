@@ -67,6 +67,7 @@ import {
   type PrismEndpoint,
   publishPrismEndpoint,
   publishPrismEnabled,
+  publishPrismIdentityRequired,
 } from "./PrismEnvironment.ts";
 import { materializeCodexProxyHome } from "./CodexProxyHome.ts";
 
@@ -353,9 +354,10 @@ const make = Effect.gen(function* () {
   const lifecycle = yield* Semaphore.make(1);
   const runScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() =>
-    Effect.sync(() => publishPrismEnabled(false)).pipe(
-      Effect.andThen(Scope.close(runScope, Exit.void)),
-    ),
+    Effect.sync(() => {
+      publishPrismEnabled(false);
+      publishPrismIdentityRequired(false);
+    }).pipe(Effect.andThen(Scope.close(runScope, Exit.void))),
   );
 
   /** Apply a patch derived from the current status; entering a new state stamps `since`. */
@@ -627,11 +629,12 @@ const make = Effect.gen(function* () {
     yield* Effect.logInfo("prism: stopped");
   });
 
-  const apply = (values: { readonly prism: boolean }) =>
+  const apply = (values: { readonly prism: boolean; readonly "mic-identity": boolean }) =>
     lifecycle.withPermits(1)(
-      Effect.sync(() => publishPrismEnabled(values.prism)).pipe(
-        Effect.andThen(values.prism ? start : stop),
-      ),
+      Effect.sync(() => {
+        publishPrismEnabled(values.prism);
+        publishPrismIdentityRequired(values["mic-identity"]);
+      }).pipe(Effect.andThen(values.prism && !values["mic-identity"] ? start : stop)),
     );
 
   yield* apply(yield* flags.current);

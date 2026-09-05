@@ -32,6 +32,8 @@ describe("prism api contract", () => {
         "deleteAccount",
         "getRouting",
         "getUsage",
+        "identityAccess",
+        "identityConfig",
         "listAccounts",
         "loginCallback",
         "loginStatus",
