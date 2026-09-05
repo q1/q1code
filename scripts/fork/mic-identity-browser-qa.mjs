@@ -402,6 +402,8 @@ try {
     false,
   );
   passed.push("Mobile viewport has no horizontal overflow");
+  await page.getByRole("region", { name: "Prism response" }).scrollIntoViewIfNeeded();
+  await photo("03b-mobile-response.png");
   await page.setViewportSize({ width: 1365, height: 1000 });
   state.holdStream = true;
   await page.getByRole("button", { name: "Send", exact: true }).click();
@@ -413,6 +415,7 @@ try {
   state.holdStream = false;
   await bind("admin");
   await page.getByLabel("Prism routing strategy").waitFor();
+  await page.getByText("Administrator", { exact: true }).waitFor();
   await page.getByLabel("Prism routing strategy").selectOption("fill-first");
   await page.getByText("Confirmed by Prism", { exact: true }).waitFor();
   NodeAssert.equal(state.strategy, "fill-first");
