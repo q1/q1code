@@ -1,5 +1,6 @@
 import { ClerkProvider } from "@clerk/electron/react";
 import { passkeys } from "@clerk/electron/passkeys";
+import { clerkAppearance } from "~/components/clerk/clerkAppearance";
 import { MicIdentitySession } from "./MicIdentitySession";
 
 export default function ElectronMicIdentity({
@@ -8,7 +9,7 @@ export default function ElectronMicIdentity({
   readonly publishableKey: string;
 }) {
   return (
-    <ClerkProvider publishableKey={publishableKey} passkeys={passkeys}>
+    <ClerkProvider appearance={clerkAppearance} publishableKey={publishableKey} passkeys={passkeys}>
       <MicIdentitySession />
     </ClerkProvider>
   );

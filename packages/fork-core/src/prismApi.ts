@@ -36,6 +36,7 @@ export const PRISM_USAGE_SOURCE_LABEL = "Prism";
 export const PRISM_API_PATHS = {
   identityConfig: `${PRISM_API_PREFIX}/identity/config`,
   identityAccess: `${PRISM_API_PREFIX}/identity/access`,
+  identityThread: `${PRISM_API_PREFIX}/identity/threads/:threadId`,
   status: `${PRISM_API_PREFIX}/status`,
   restart: `${PRISM_API_PREFIX}/restart`,
   usageSource: `${PRISM_API_PREFIX}/usage-source`,
@@ -375,10 +376,34 @@ const ScopeErrors = [
   MicIdentityUnauthorizedError,
   MicIdentityUnavailableError,
 ] as const;
+export const MicPrismThreadReceipt = Schema.Struct({
+  threadId: Schema.String,
+  expiresAt: Schema.Int,
+});
 const ProxyErrors = [...ScopeErrors, PrismUnavailableError, PrismUpstreamError] as const;
 const SyncErrors = [...ScopeErrors, PrismUnavailableError, PrismSyncFailedError] as const;
 
 export class PrismHttpApiGroup extends HttpApiGroup.make("prism")
+  .add(
+    HttpApiEndpoint.put("connectIdentityThread", PRISM_API_PATHS.identityThread, {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({
+        threadId: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(256)),
+      }),
+      success: MicPrismThreadReceipt,
+      error: ScopeErrors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.delete("disconnectIdentityThread", PRISM_API_PATHS.identityThread, {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({
+        threadId: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(256)),
+      }),
+      success: MicPrismThreadReceipt,
+      error: ScopeErrors,
+    }),
+  )
   .add(
     HttpApiEndpoint.get("identityConfig", PRISM_API_PATHS.identityConfig, {
       headers: OptionalBearerHeaders,

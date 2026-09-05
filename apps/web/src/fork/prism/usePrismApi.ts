@@ -6,6 +6,8 @@
  */
 import {
   cancelPrismLogin,
+  connectMicPrismThread,
+  disconnectMicPrismThread,
   type PrismAccountId,
   type PrismAccountPatch,
   type PrismClientError,
@@ -64,18 +66,18 @@ const bindCalls = (
   identity: boolean,
   generation: number,
 ) => {
-  const run = <A>(call: Call<A>): Promise<PrismResult<A>> =>
+  const run = <A>(call: Call<A>, human = identity): Promise<PrismResult<A>> =>
     runtime
       .runPromise(
         Effect.gen(function* () {
-          if (identity && micIdentityGeneration() !== generation) {
+          if (human && micIdentityGeneration() !== generation) {
             return yield* new MicIdentityUnauthorizedError({ reason: "sign-in-required" });
           }
           const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
           return yield* call({
             prepared,
             signer,
-            ...(identity ? { micScToken: readMicIdentityToken } : {}),
+            ...(human ? { micScToken: readMicIdentityToken } : {}),
           });
         }).pipe(
           Effect.match({
@@ -87,6 +89,10 @@ const bindCalls = (
       .catch((): PrismResult<A> => ({ _tag: "error", error: { _tag: "UnknownError" } }));
 
   return {
+    connectThread: (threadId: string) =>
+      run((input) => connectMicPrismThread({ ...input, threadId })),
+    disconnectThread: (threadId: string) =>
+      run((input) => disconnectMicPrismThread({ ...input, threadId }), false),
     identityConfig: () => run(getPrismIdentityConfig),
     identityAccess: () => run(getPrismIdentityAccess),
     status: () => run(getPrismStatus),

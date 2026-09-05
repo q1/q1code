@@ -8,6 +8,8 @@ import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import {
   bindMicIdentitySession,
   micIdentityGeneration,
+  micIdentitySessionSnapshot,
+  subscribeMicIdentity,
   readMicIdentityToken,
 } from "./micIdentitySession";
 
@@ -56,6 +58,93 @@ const currentInput = () => {
 };
 
 describe("mic.sc account changes", () => {
+  it.effect(
+    "clears access immediately while sign-out is pending and never restores it after failure",
+    () =>
+      Effect.gen(function* () {
+        const pending = promiseGate<void>();
+        let attempts = 0;
+        bindMicIdentitySession(() => Promise.resolve("fixture-admin-token"), {
+          loaded: true,
+          signIn: () => {},
+          signOut: async () => {
+            attempts++;
+            await pending.promise;
+            throw new Error("SDK diagnostic containing a fixture credential");
+          },
+        });
+        const signingOut = micIdentitySessionSnapshot().signOut!();
+        expect(micIdentitySessionSnapshot().status).toBe("signing-out");
+        expect(yield* readMicIdentityToken()).toBeNull();
+        pending.resolve();
+        yield* Effect.promise(() => signingOut);
+        expect(micIdentitySessionSnapshot()).toMatchObject({
+          status: "signed-out",
+          error: "Prism access is paused. Sign-out could not finish; please try again.",
+        });
+        expect(micIdentitySessionSnapshot().signIn).toBeUndefined();
+        expect(yield* readMicIdentityToken()).toBeNull();
+        yield* Effect.promise(() => micIdentitySessionSnapshot().signOut!());
+        expect(attempts).toBe(2);
+      }),
+  );
+
+  it.effect("a previous account's sign-out completion cannot overwrite the new session", () =>
+    Effect.gen(function* () {
+      const pending = promiseGate<void>();
+      bindMicIdentitySession(() => Promise.resolve("fixture-old-token"), {
+        loaded: true,
+        signIn: () => {},
+        signOut: () => pending.promise,
+      });
+      const oldSignOut = micIdentitySessionSnapshot().signOut!;
+      const signingOut = oldSignOut();
+      bindMicIdentitySession(() => Promise.resolve("fixture-current-token"));
+      pending.resolve();
+      yield* Effect.promise(() => signingOut);
+      yield* Effect.promise(oldSignOut);
+      expect(micIdentitySessionSnapshot().status).toBe("signed-in");
+      expect(yield* readMicIdentityToken()).toBe("fixture-current-token");
+    }),
+  );
+
+  it("offers sign-in after a successful sign-out and sanitizes SDK errors", async () => {
+    let opened = 0;
+    bindMicIdentitySession(() => Promise.resolve("fixture-token"), {
+      loaded: true,
+      signIn: () => {
+        opened++;
+        throw new Error("private SDK diagnostics");
+      },
+      signOut: () => {},
+    });
+    await micIdentitySessionSnapshot().signOut!();
+    expect(micIdentitySessionSnapshot().status).toBe("signed-out");
+    await micIdentitySessionSnapshot().signIn!();
+    expect(opened).toBe(1);
+    expect(micIdentitySessionSnapshot().error).toBe("Sign-in could not open. Please try again.");
+    expect(micIdentitySessionSnapshot().signOut).toBeUndefined();
+  });
+
+  it("publishes loading and cleanup without enabling actions or leaving listeners behind", () => {
+    let notifications = 0;
+    const unsubscribe = subscribeMicIdentity(() => {
+      notifications++;
+    });
+    const cleanup = bindMicIdentitySession(undefined, {
+      loaded: false,
+      signIn: () => {},
+      signOut: () => {},
+    });
+    expect(micIdentitySessionSnapshot()).toEqual({ status: "loading", error: null });
+    cleanup();
+    expect(micIdentitySessionSnapshot()).toEqual({ status: "unavailable", error: null });
+    expect(notifications).toBe(2);
+    unsubscribe();
+    bindMicIdentitySession();
+    expect(notifications).toBe(2);
+  });
+
   it.effect("discards a token whose account signs out while the SDK is resolving it", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();

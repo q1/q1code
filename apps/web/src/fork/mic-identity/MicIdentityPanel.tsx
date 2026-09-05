@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { CheckIcon, CloudOffIcon, LogInIcon, ShieldCheckIcon, ServerIcon } from "lucide-react";
 import * as Effect from "effect/Effect";
 import {
   getMicIdentityAccess,
@@ -19,65 +20,84 @@ import { useMicIdentityConfig } from "./useMicIdentityConfig";
 import { useDocumentVisible } from "../prism/prismUi";
 import {
   micIdentityGeneration,
+  micIdentitySessionSnapshot,
   readMicIdentityToken,
   subscribeMicIdentity,
 } from "./micIdentitySession";
+import { MicPrismPairing } from "./MicPrismPairing";
+import { MicPrismChat } from "./MicPrismChat";
 
 type View = {
+  authorityUrl: string;
   generation: number;
   access: MicIdentityAccess;
   routing: PrismRoutingStrategy | null;
   receivedAt: number;
 };
 
-/** Uses the signed-in service API directly; no environment session is issued by mic.sc identity. */
 export function MicIdentityPanel() {
   const { config, error: configError, retry, revision } = useMicIdentityConfig();
   const generation = useSyncExternalStore(subscribeMicIdentity, micIdentityGeneration);
+  const session = useSyncExternalStore(subscribeMicIdentity, micIdentitySessionSnapshot);
   const visible = useDocumentVisible();
   const [view, setView] = useState<View | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState<View | null>(null);
   const operation = useRef(0);
   const mutating = useRef(false);
-  const current = view?.generation === generation ? view : null;
+  const current =
+    session.status === "signed-in" &&
+    view?.generation === generation &&
+    view.authorityUrl === config?.authorityUrl
+      ? view
+      : null;
+  const service = current?.access.discovery.service;
 
   useEffect(() => {
     const authorityUrl = config?.authorityUrl;
-    if (!visible || !authorityUrl) return;
+    if (!visible || !authorityUrl || session.status !== "signed-in") return;
     let cancelled = false;
     let loading = false;
+    const controller = new AbortController();
     const tick = async () => {
       if (loading || mutating.current) return;
       loading = true;
       const ticket = ++operation.current;
-      const result = await runtime.runPromise(
-        Effect.gen(function* () {
-          const input = {
-            baseUrl: authorityUrl,
-            getToken: readMicIdentityToken,
-            isCurrent: () => micIdentityGeneration() === generation,
-          };
-          const access = yield* getMicIdentityAccess(input);
-          yield* getMicPrismStatus(input);
-          const routing = access.session.permissions.includes("prism:routing:read")
-            ? (yield* getMicPrismRouting(input)).strategy
-            : null;
-          return { access, routing };
-        }).pipe(Effect.result),
-      );
-      loading = false;
-      if (cancelled || ticket !== operation.current) return;
-      if (result._tag === "Failure") {
-        setError(result.failure.message);
-        if (
-          result.failure._tag === "MicIdentityUnauthorizedError" ||
-          result.failure._tag === "MicIdentityForbiddenError"
-        )
-          setView(null);
-      } else {
-        setError(null);
-        setView({ ...result.success, generation, receivedAt: Date.now() });
+      try {
+        const result = await runtime.runPromise(
+          Effect.gen(function* () {
+            const input = {
+              baseUrl: authorityUrl,
+              getToken: readMicIdentityToken,
+              isCurrent: () => micIdentityGeneration() === generation,
+            };
+            const access = yield* getMicIdentityAccess({ ...input, allowUnpaired: true });
+            if (!access.discovery.service) return { access, routing: null };
+            yield* getMicPrismStatus(input);
+            const routing = access.session.permissions.includes("prism:routing:read")
+              ? (yield* getMicPrismRouting(input)).strategy
+              : null;
+            return { access, routing };
+          }).pipe(Effect.result),
+          { signal: controller.signal },
+        );
+        if (cancelled || ticket !== operation.current) return;
+        if (result._tag === "Failure") {
+          setError(result.failure.message);
+          if (
+            result.failure._tag === "MicIdentityUnauthorizedError" ||
+            result.failure._tag === "MicIdentityForbiddenError"
+          )
+            setView(null);
+        } else {
+          setError(null);
+          setView({ ...result.success, authorityUrl, generation, receivedAt: Date.now() });
+        }
+      } catch {
+        if (!cancelled) setError("Prism could not be reached. Try again.");
+      } finally {
+        loading = false;
       }
     };
     void tick();
@@ -85,126 +105,244 @@ export function MicIdentityPanel() {
     return () => {
       cancelled = true;
       operation.current++;
+      controller.abort();
       window.clearInterval(timer);
     };
-  }, [config, generation, visible, revision]);
+  }, [config?.authorityUrl, generation, session.status, visible, revision]);
 
   const changeRouting = async (strategy: PrismRoutingStrategy) => {
     if (
       !current ||
+      !service ||
       error ||
-      busy ||
+      mutating.current ||
       !config?.authorityUrl ||
       !current.access.session.permissions.includes("prism:routing:write")
     )
       return;
     const ticket = ++operation.current;
-    const initiatingGeneration = generation;
+    const target = service;
     setBusy(true);
+    setSaved(null);
     mutating.current = true;
-    const result = await runtime.runPromise(
-      setMicPrismRouting({
-        baseUrl: config.authorityUrl,
-        getToken: readMicIdentityToken,
-        isCurrent: () => micIdentityGeneration() === generation,
-        strategy,
-      }).pipe(Effect.result),
-    );
-    mutating.current = false;
-    if (ticket !== operation.current || micIdentityGeneration() !== initiatingGeneration) {
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const input = {
+            baseUrl: config.authorityUrl!,
+            expectedService: target,
+            getToken: readMicIdentityToken,
+            isCurrent: () => micIdentityGeneration() === generation,
+          };
+          const access = yield* getMicIdentityAccess(input);
+          if (
+            access.discovery.service?.id !== target.id ||
+            access.discovery.service.pairingRevision !== target.pairingRevision
+          )
+            return { changedHost: true as const };
+          yield* setMicPrismRouting({ ...input, strategy });
+          return {
+            changedHost: false as const,
+            routing: (yield* getMicPrismRouting(input)).strategy,
+          };
+        }).pipe(Effect.result),
+      );
+      if (ticket !== operation.current || micIdentityGeneration() !== generation) return;
+      if (result._tag === "Failure") {
+        setError(result.failure.message);
+        if (
+          result.failure._tag === "MicIdentityUnauthorizedError" ||
+          result.failure._tag === "MicIdentityForbiddenError"
+        )
+          setView(null);
+      } else if (result.success.changedHost) {
+        setError("Your paired host changed. Refresh before changing routing.");
+      } else {
+        const confirmed = { ...current, routing: result.success.routing, receivedAt: Date.now() };
+        setView(confirmed);
+        setSaved(confirmed);
+      }
+    } catch {
+      if (micIdentityGeneration() === generation)
+        setError("The routing change could not be confirmed. Refresh to check its current value.");
+    } finally {
+      mutating.current = false;
       setBusy(false);
-      return;
     }
-    setBusy(false);
-    if (result._tag === "Failure") setError(result.failure.message);
-    else setView({ ...current, routing: result.success.strategy, receivedAt: Date.now() });
   };
 
+  const signedIn = session.status === "signed-in";
+  const message = session.error ?? configError ?? (signedIn ? error : null);
   return (
     <SettingsPageContainer>
-      <SettingsSection title="mic.sc">
-        <SettingsRow
-          title={current ? "Signed in to mic.sc" : "Sign in to mic.sc"}
-          description={
-            error ??
-            configError ??
-            (current
-              ? "Your account determines Prism access. Environment and workspace access remain separately authorized."
-              : "Use Sign in to mic.sc in the sidebar to discover your Prism service.")
-          }
-        />
-      </SettingsSection>
-      {current ? (
-        <>
-          <SettingsSection title="Prism">
-            <SettingsRow
-              title={current.access.discovery.service?.label ?? "No paired service"}
-              description={
-                error
-                  ? "Offline — showing the last verified service. Changes are disabled."
-                  : "Service access verified. Model availability, usable account counts and provider warnings are not reported by this service yet."
-              }
-            />
-            <SettingsRow
-              title="Coding sessions"
-              description="Prism routing with mic.sc sign-in is not available for coding sessions yet. Existing direct-provider connections remain available."
-            />
-            <SettingsRow
-              title="Account access"
-              description={
-                current.access.session.capabilities.accountDetails
-                  ? "Prism administrator"
-                  : "Inference access"
-              }
-            />
-          </SettingsSection>
-          {current.routing !== null ? (
-            <SettingsSection title="Routing">
-              <SettingsRow
-                title="Account selection"
-                description="Applied by the paired Prism service. Changing this does not change a thread's selected model."
-              >
-                <select
-                  aria-label="Prism routing strategy"
-                  value={current.routing}
-                  disabled={
-                    busy ||
-                    error !== null ||
-                    !current.access.session.permissions.includes("prism:routing:write")
-                  }
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    if (
-                      value === "round-robin" ||
-                      value === "weighted-round-robin" ||
-                      value === "fill-first"
-                    )
-                      void changeRouting(value);
-                  }}
-                  className="rounded-md border bg-background px-2 py-1 text-sm"
-                >
-                  <option value="round-robin">Round robin</option>
-                  <option value="weighted-round-robin">Weighted round robin</option>
-                  <option value="fill-first">Fill first</option>
-                </select>
-              </SettingsRow>
-            </SettingsSection>
+      <div className="space-y-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <ShieldCheckIcon className="size-4" />
+              mic.sc
+            </div>
+            <h1 className="text-2xl font-semibold tracking-tight">Your Prism connection</h1>
+            <p className="mt-2 max-w-lg text-sm leading-6 text-muted-foreground">
+              Use the shared model pool with your mic.sc account. Your environments and workspaces
+              keep their own access controls.
+            </p>
+          </div>
+          {signedIn && session.signOut ? (
+            <Button variant="ghost" onClick={() => void session.signOut?.()}>
+              Sign out
+            </Button>
           ) : null}
-          {current.access.session.capabilities.accountDetails ? (
-            <SettingsSection title="Accounts and settings">
-              <SettingsRow
-                title="Account management unavailable"
-                description="This Prism service does not provide remote account sign-in or advanced settings yet."
+        </div>
+        {!signedIn ? (
+          <div className="rounded-xl border border-border bg-card px-6 py-8">
+            <LogInIcon className="mb-4 size-6 text-muted-foreground" />
+            <h2 className="text-base font-medium">Sign in to mic.sc</h2>
+            <p className="mb-5 mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+              Find your paired host and use Prism. You can get started without connecting a coding
+              environment.
+            </p>
+            <Button
+              disabled={
+                !session.signIn || session.status === "loading" || session.status === "signing-out"
+              }
+              onClick={() => void session.signIn?.()}
+            >
+              {session.status === "loading"
+                ? "Loading sign-in…"
+                : session.status === "signing-out"
+                  ? "Signing out…"
+                  : "Sign in to mic.sc"}
+            </Button>
+            {session.error && session.signOut ? (
+              <Button variant="outline" className="ml-2" onClick={() => void session.signOut?.()}>
+                Retry sign-out
+              </Button>
+            ) : null}
+          </div>
+        ) : current ? (
+          <>
+            <div className="flex flex-wrap items-start gap-4 rounded-xl border border-border bg-card p-5">
+              <div className="rounded-lg bg-muted p-2.5">
+                {error ? (
+                  <CloudOffIcon className="size-5 text-muted-foreground" />
+                ) : (
+                  <ServerIcon className="size-5 text-muted-foreground" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-sm font-medium">{service?.label ?? "No paired host yet"}</h2>
+                  {service ? (
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                      {error ? "Offline" : "Access verified"}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {error
+                    ? "Showing the last verified host. Changes and new requests are paused."
+                    : service
+                      ? "Your mic.sc session is authorized for this host."
+                      : "You're signed in. A Prism administrator needs to pair and select a host before you can send requests."}
+                </p>
+              </div>
+              <span className="basis-full pl-14 text-xs text-muted-foreground sm:basis-auto sm:pl-0">
+                {current.access.session.capabilities.manage ? "Administrator" : "Inference access"}
+              </span>
+            </div>
+            {service && config?.authorityUrl ? (
+              <MicPrismChat
+                key={`${config.authorityUrl}:${generation}:${service.id}:${service.pairingRevision}:${service.inferenceUrl}`}
+                authorityUrl={config.authorityUrl}
+                service={service}
+                generation={generation}
+                disabled={error !== null}
               />
-            </SettingsSection>
-          ) : null}
-        </>
-      ) : null}
-      {error || configError ? (
-        <Button variant="outline" onClick={retry}>
-          Check again
-        </Button>
-      ) : null}
+            ) : null}
+            {current.routing !== null ? (
+              <SettingsSection title="Routing">
+                <SettingsRow
+                  title="Account selection"
+                  description="Choose how Prism distributes requests across the pool. The selected model stays the same."
+                >
+                  <select
+                    aria-label="Prism routing strategy"
+                    value={current.routing}
+                    disabled={
+                      busy ||
+                      error !== null ||
+                      !current.access.session.permissions.includes("prism:routing:write")
+                    }
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (
+                        value === "round-robin" ||
+                        value === "weighted-round-robin" ||
+                        value === "fill-first"
+                      )
+                        void changeRouting(value);
+                    }}
+                    className="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                  >
+                    <option value="round-robin">Round robin</option>
+                    <option value="weighted-round-robin">Weighted round robin</option>
+                    <option value="fill-first">Fill first</option>
+                  </select>
+                </SettingsRow>
+                {saved &&
+                saved.generation === generation &&
+                saved.authorityUrl === current.authorityUrl &&
+                saved.access.discovery.service?.id === service?.id &&
+                saved.access.discovery.service?.pairingRevision === service?.pairingRevision &&
+                saved.routing === current.routing ? (
+                  <p
+                    role="status"
+                    className="flex items-center gap-1.5 text-xs text-muted-foreground"
+                  >
+                    <CheckIcon className="size-3.5" />
+                    Confirmed by Prism
+                  </p>
+                ) : null}
+              </SettingsSection>
+            ) : null}
+            {config?.authorityUrl ? (
+              <MicPrismPairing
+                authorityUrl={config.authorityUrl}
+                generation={generation}
+                access={current.access}
+                onChanged={retry}
+              />
+            ) : null}
+            {current.access.session.capabilities.accountDetails ? (
+              <SettingsSection title="Management">
+                <SettingsRow
+                  title="Accounts and advanced settings"
+                  description="Remote account sign-in, reserves and advanced settings are not available from this service yet."
+                />
+              </SettingsSection>
+            ) : null}
+          </>
+        ) : (
+          <div
+            role="status"
+            className="rounded-xl border border-border p-6 text-sm text-muted-foreground"
+          >
+            {error ? "Prism access could not be verified." : "Finding your Prism host…"}
+          </div>
+        )}
+        {message ? (
+          <div
+            role="alert"
+            className="rounded-lg border border-destructive/25 bg-destructive/5 p-4 text-sm"
+          >
+            <p>{message}</p>
+            <Button variant="outline" className="mt-3" onClick={retry}>
+              Check again
+            </Button>
+          </div>
+        ) : null}
+      </div>
     </SettingsPageContainer>
   );
 }

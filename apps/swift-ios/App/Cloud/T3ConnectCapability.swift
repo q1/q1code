@@ -157,14 +157,21 @@ public final class T3ConnectController: T3ConnectDeviceManaging {
 
     var clerk: Clerk? { auth?.client }
 
+    func micPrismSessionID(expectedPublishableKey: String) -> String? {
+        guard resolution.configuration?.clerkPublishableKey == expectedPublishableKey,
+              !isLocalAuthorizationInvalidated, !isSignOutInProgress else { return nil }
+        return clerk?.session?.id
+    }
+
     /// mic.sc credentials never substitute for a relay or environment credential.
+    /// Use the default Clerk session JWT: the authority checks its sid against the live session.
     func micPrismToken(expectedPublishableKey: String) async throws -> String {
         guard resolution.configuration?.clerkPublishableKey == expectedPublishableKey,
               !isLocalAuthorizationInvalidated, !isSignOutInProgress,
               let clerk, let session = clerk.session else {
             throw FeatureCapabilityUnavailable("Sign in with the configured mic.sc account service")
         }
-        let token = try await session.getToken(.init(template: "convex", skipCache: true))
+        let token = try await session.getToken(.init(skipCache: true))
         guard clerk.session?.id == session.id, !isLocalAuthorizationInvalidated,
               !isSignOutInProgress, let token, !token.isEmpty else {
             throw FeatureCapabilityUnavailable("mic.sc sign-in")

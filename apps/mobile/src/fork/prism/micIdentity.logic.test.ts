@@ -25,9 +25,9 @@ describe("mobile mic.sc identity boundary", () => {
     expect(resolveMicMobileIdentityMode({ enabled: true }, null, true)).toBe("unconfigured");
   });
 
-  it.effect("mints a fresh Convex JWT for each operation", () =>
+  it.effect("mints a fresh default session JWT for each operation", () =>
     Effect.gen(function* () {
-      const options: Array<{ template: string; skipCache: boolean }> = [];
+      const options: Array<{ skipCache: boolean }> = [];
       const source = freshMicMobileToken(
         async (input) => {
           options.push(input);
@@ -37,10 +37,7 @@ describe("mobile mic.sc identity boundary", () => {
       );
       expect(yield* source()).toBe("token-1");
       expect(yield* source()).toBe("token-2");
-      expect(options).toEqual([
-        { template: "convex", skipCache: true },
-        { template: "convex", skipCache: true },
-      ]);
+      expect(options).toEqual([{ skipCache: true }, { skipCache: true }]);
     }),
   );
 

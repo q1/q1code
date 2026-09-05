@@ -919,3 +919,5 @@ function SkeletonRows(props: { readonly count: number }) {
     </View>
   );
 }
+
+export { withMicPrismIdentity } from "./PersistentMicPrismIdentity";

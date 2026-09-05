@@ -1,4 +1,5 @@
 import { ClerkProvider } from "@clerk/react";
+import { clerkAppearance } from "~/components/clerk/clerkAppearance";
 import { MicIdentitySession } from "./MicIdentitySession";
 
 export default function BrowserMicIdentity({
@@ -7,7 +8,7 @@ export default function BrowserMicIdentity({
   readonly publishableKey: string;
 }) {
   return (
-    <ClerkProvider publishableKey={publishableKey}>
+    <ClerkProvider appearance={clerkAppearance} publishableKey={publishableKey}>
       <MicIdentitySession />
     </ClerkProvider>
   );

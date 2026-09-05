@@ -2,7 +2,7 @@ import { lazy, Suspense } from "react";
 import { AlertCircleIcon } from "lucide-react";
 import { SidebarMenuButton, SidebarMenuItem } from "~/components/ui/sidebar";
 import { isElectron } from "~/env";
-import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { hasCloudPublicConfig, resolveCloudPublicConfig } from "~/cloud/publicConfig";
 import { useMicIdentityConfig } from "./useMicIdentityConfig";
 
 const Identity = lazy(() =>
@@ -17,7 +17,7 @@ export function MicIdentityNavigation() {
   const { config, error, retry } = useMicIdentityConfig();
   const key = config?.enabled ? config.clerkPublishableKey : null;
   const existingKey = hasCloudPublicConfig()
-    ? (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined)
+    ? resolveCloudPublicConfig().clerkPublishableKey
     : undefined;
   const incompatible = existingKey && key && existingKey !== key;
   if (error || incompatible)
@@ -38,8 +38,16 @@ export function MicIdentityNavigation() {
       </SidebarMenuItem>
     );
   return key ? (
-    <Suspense fallback={null}>
-      {existingKey ? <SharedIdentity /> : <Identity publishableKey={key} />}
+    <Suspense
+      fallback={
+        <SidebarMenuItem>
+          <SidebarMenuButton disabled>
+            <span>Loading mic.sc sign-in…</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      }
+    >
+      {existingKey ? <SharedIdentity /> : <Identity key={key} publishableKey={key} />}
     </Suspense>
   ) : null;
 }

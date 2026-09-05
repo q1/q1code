@@ -5,6 +5,7 @@ import ClerkKitUI
 public struct PrismView: View {
     private let client: any FeatureClient
     private let environments: [FeatureEnvironment]
+    private let threads: [FeatureThread]
     @Environment(\.scenePhase) private var scenePhase
     @State private var environmentID = ""
     @State private var status: PrismResponse?
@@ -26,8 +27,9 @@ public struct PrismView: View {
     @State private var showingIdentitySignIn = false
     @State private var loadGeneration = 0
 
-    public init(client: any FeatureClient, environments: [FeatureEnvironment]) {
+    public init(client: any FeatureClient, environments: [FeatureEnvironment], threads: [FeatureThread] = []) {
         self.client = client
+        self.threads = threads
         self.environments = environments.filter { $0.isEnabled && $0.prismEnabled == true }
     }
 
@@ -46,6 +48,13 @@ public struct PrismView: View {
         return controller
     }
 
+    private var identityRoutingRead: Bool { identity?.session?.permissions.contains("prism:routing:read") == true }
+    private var identityRoutingWrite: Bool {
+        identityConfiguration.enabled && !stale && !pending && identityRoutingRead &&
+        identity?.session?.permissions.contains("prism:routing:write") == true &&
+        (identity?.session?.authorizationExpiresAt ?? 0) > Date().timeIntervalSince1970 * 1000
+    }
+
     public var body: some View {
         Form {
             if identityConfiguration.enabled {
@@ -55,7 +64,8 @@ public struct PrismView: View {
                             if let subject = knownIdentity.session?.subject { Text(subject) }
                             if let service = knownIdentity.discovery?.service { LabeledContent("Paired Prism", value: service.label) }
                             Button("Sign out of mic.sc") {
-                                identity = nil; status = nil; accounts = []; stale = true
+                                loadGeneration += 1
+                                identity = nil; status = nil; accounts = []; strategy = ""; login = nil; callback = ""; stale = true
                                 Task { await (client as? any T3ConnectCapable)?.signOutT3Connect() }
                             }
                         } else {
@@ -74,7 +84,7 @@ public struct PrismView: View {
                     ForEach(environments) { environment in Text(environment.name).tag(environment.id) }
                 }
                 .disabled(login != nil || pending)
-                LabeledContent("Gateway", value: stale || !connected ? "Offline" : currentStatus?.state ?? "Checking…")
+                LabeledContent("Gateway", value: stale ? "Unavailable" : currentStatus?.state == "access-verified" ? "Access verified" : !connected ? "Offline" : currentStatus?.state ?? "Checking…")
                 if (stale || !connected), let state = currentStatus?.state {
                     Text("Last known state: \(state). Management is unavailable until the connection recovers.")
                         .foregroundStyle(.secondary)
@@ -88,7 +98,35 @@ public struct PrismView: View {
                 if currentStatus?.lastSyncError != nil { Text("Account sync needs attention on this environment.").foregroundStyle(.red) }
             } header: { Text("Prism") }
 
-            if access.accountDetails {
+            if identityConfiguration.enabled {
+                if let controller = (client as? any MicPrismThreadCapable)?.micPrismThreads, identity != nil {
+                    MicPrismThreadView(controller: controller, client: client, environmentID: environmentID, authorityURL: identityConfiguration.authorityUrl, threads: threads.filter { $0.environmentID == environmentID })
+                }
+                if let identity, let service = identity.discovery?.service, currentStatus != nil {
+                    MicPrismInferenceView(client: client, environmentID: environmentID, enabled: !stale, service: service, authorityUrl: identityConfiguration.authorityUrl)
+                        .id(environmentID + (identityConfiguration.authorityUrl ?? "") + service.id + String(service.pairingRevision) + service.apiUrl + (service.inferenceUrl ?? "") + (identity.session?.subject ?? "") + (identityController?.clerk?.session?.id ?? ""))
+                }
+                if identityRoutingRead {
+                    Section("Pool routing") {
+                        Picker("Routing strategy", selection: Binding(get: { strategy }, set: { value in
+                            Task { await change(PrismRequest("/routing", method: "PUT", body: ["strategy": .string(value)])) }
+                        })) {
+                            Text("Unknown").tag("")
+                            Text("Round robin").tag("round-robin")
+                            Text("Weighted round robin").tag("weighted-round-robin")
+                            Text("Fill first").tag("fill-first")
+                        }.disabled(!identityRoutingWrite || strategy.isEmpty)
+                    }
+                }
+                Section("Prism access") {
+                    Text("Service access is verified separately from engine health and model availability.")
+                        .foregroundStyle(.secondary)
+                    if identity?.session?.permissions.contains("prism:accounts:read") == true {
+                        Text("Remote account management is not available from this service yet.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else if access.accountDetails {
                 Section("Gateway settings") {
                     Toggle("Show pooled accounts on Usage → Limits", isOn: Binding(get: { currentStatus?.usageSource ?? true }, set: { enabled in
                         Task { await change(PrismRequest("/usage-source", method: "PUT", body: ["enabled": .bool(enabled)])) }
@@ -160,7 +198,7 @@ public struct PrismView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .t3ConnectSessionChanged)) { _ in
             loadGeneration += 1
-            identity = nil; status = nil; accounts = []; stale = true
+            identity = nil; status = nil; accounts = []; strategy = ""; login = nil; callback = ""; stale = true
             Task { await load() }
         }
         .refreshable { await load() }
@@ -200,7 +238,12 @@ public struct PrismView: View {
         .confirmationDialog("Restart Prism? Requests will fail until it is ready again.", isPresented: $confirmingRestart) {
             Button("Restart", role: .destructive) { Task { await change(PrismRequest("/restart", method: "POST")) } }
         }
-        .sheet(isPresented: $showingIdentitySignIn, onDismiss: { Task { await load() } }) {
+        .sheet(isPresented: $showingIdentitySignIn, onDismiss: {
+            Task {
+                if identityController?.clerk?.session != nil { await identityController?.refreshAfterAuthentication() }
+                await load()
+            }
+        }) {
             if let clerk = identityController?.clerk {
                 AuthView(mode: .signInOrUp).environment(clerk)
             }
@@ -208,10 +251,10 @@ public struct PrismView: View {
     }
 
     @MainActor private func load() async {
+        guard !environmentID.isEmpty, !pending else { return }
         loadGeneration += 1
         let generation = loadGeneration
         let selected = environmentID
-        guard !selected.isEmpty else { return }
         do {
             let config = try await client.prismIdentityConfiguration(environmentID: selected)
             guard selected == environmentID, generation == loadGeneration, !Task.isCancelled else { return }
@@ -222,15 +265,30 @@ public struct PrismView: View {
                 identity = nextIdentity
             } else { identity = nil }
             let nextStatus = try await client.prism(PrismRequest("/status"), environmentID: selected)
-            let nextSession = try? await client.prismSession(environmentID: selected)
+            let nextSession: AuthSessionState?
+            if config.enabled { nextSession = nil }
+            else { nextSession = try? await client.prismSession(environmentID: selected) }
             guard selected == environmentID, generation == loadGeneration, !Task.isCancelled else { return }
             if loadedEnvironmentID != selected { accounts = []; strategy = "" }
             loadedEnvironmentID = selected
             status = nextStatus; session = nextSession; stale = false; errorMessage = nil
+            if config.enabled {
+                if identityRoutingRead {
+                    let routing = try await client.prism(PrismRequest("/routing"), environmentID: selected)
+                    guard selected == environmentID, generation == loadGeneration, !Task.isCancelled else { return }
+                    strategy = routing.strategy ?? ""
+                } else { strategy = "" }
+                return
+            }
         } catch is CancellationError { }
         catch {
             guard selected == environmentID, generation == loadGeneration else { return }
-            stale = true; errorMessage = "Prism is unavailable. Check the connection and whether Prism is enabled on this environment."
+            stale = true
+            if let micError = error as? MicPrismError {
+                errorMessage = micError.localizedDescription
+                if case .signedOut = micError { identity = nil; status = nil; accounts = []; strategy = "" }
+                if case .denied = micError { identity = nil; status = nil; accounts = []; strategy = "" }
+            } else { errorMessage = "Prism is unavailable. Check the connection and whether Prism is enabled on this environment." }
             return
         }
         guard selected == environmentID, generation == loadGeneration, access.accountDetails, currentStatus?.state == "ready", !Task.isCancelled else { return }
@@ -247,13 +305,32 @@ public struct PrismView: View {
     }
 
     @MainActor private func change(_ request: PrismRequest) async {
-        let allowed = request.path == "/restart" || request.path == "/usage-source"
-            ? access.configure : request.path == "/routing" ? access.routing : access.accounts
+        let allowed: Bool
+        if identityConfiguration.enabled { allowed = request.path == "/routing" && identityRoutingWrite }
+        else if request.path == "/restart" || request.path == "/usage-source" { allowed = access.configure }
+        else if request.path == "/routing" { allowed = access.routing }
+        else { allowed = access.accounts }
         guard allowed, !pending else { return }
         pending = true
+        loadGeneration += 1
+        let generation = loadGeneration
+        let selected = environmentID
+        let boundRequest = identityConfiguration.enabled ? PrismRequest(request.path, method: request.method, body: request.body, expectedService: identity?.discovery?.service, identityAuthorityUrl: identityConfiguration.authorityUrl) : request
         defer { pending = false }
-        do { _ = try await client.prism(request, environmentID: environmentID); await load() }
-        catch { errorMessage = "The account change failed. Manage pooled accounts on the primary environment." }
+        do {
+            _ = try await client.prism(boundRequest, environmentID: selected)
+            guard selected == environmentID, generation == loadGeneration else { return }
+            pending = false
+            await load()
+        } catch {
+            guard selected == environmentID, generation == loadGeneration else { return }
+            stale = true
+            if let micError = error as? MicPrismError {
+                errorMessage = micError.localizedDescription
+                if case .signedOut = micError { identity = nil; status = nil; strategy = "" }
+                if case .denied = micError { identity = nil; status = nil; strategy = "" }
+            } else { errorMessage = "The Prism change failed. Refresh access and try again." }
+        }
     }
 
     @MainActor private func beginLogin(_ provider: String) async {

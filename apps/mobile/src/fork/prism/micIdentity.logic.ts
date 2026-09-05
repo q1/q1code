@@ -16,16 +16,16 @@ export function resolveMicMobileIdentityMode(
   return "local";
 }
 
-/** Mint on every call, and discard a token if its account changed while minting. */
+/** The authority requires the default session JWT (including sid), never a Convex template. */
 export function freshMicMobileToken(
-  read: (options: { template: string; skipCache: boolean }) => Promise<string | null>,
+  read: (options: { skipCache: boolean }) => Promise<string | null>,
   isCurrent: () => boolean,
 ): MicIdentityTokenSource {
   return () =>
     Effect.tryPromise({
       try: async () => {
         if (!isCurrent()) return null;
-        const token = await read({ template: "convex", skipCache: true });
+        const token = await read({ skipCache: true });
         return isCurrent() ? token : null;
       },
       catch: () => new MicIdentityUnauthorizedError({ reason: "sign-in-required" }),

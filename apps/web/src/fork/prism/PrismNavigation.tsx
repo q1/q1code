@@ -3,6 +3,7 @@ import { WaypointsIcon } from "lucide-react";
 import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "~/components/ui/sidebar";
 import { useForkFlag } from "../useForkFlag";
 import { MicIdentityNavigation } from "../mic-identity/MicIdentityNavigation";
+import { MicPrismThreadConnection } from "../mic-identity/MicPrismThreadConnection";
 import { readMicIdentityBuildConfig } from "../mic-identity/publicConfig";
 
 export function PrismNavigation() {
@@ -15,6 +16,7 @@ export function PrismNavigation() {
   return (
     <>
       {identity ? <MicIdentityNavigation /> : null}
+      {serverIdentity ? <MicPrismThreadConnection /> : null}
       {enabled || identity ? (
         <SidebarMenuItem>
           <SidebarMenuButton

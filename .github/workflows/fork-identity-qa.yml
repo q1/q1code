@@ -1,0 +1,65 @@
+name: Fork identity browser QA
+
+on:
+  pull_request:
+    branches: [fork]
+    paths:
+      - "apps/web/**"
+      - "packages/client-runtime/**"
+      - "packages/fork-core/**"
+      - "scripts/fork/mic-identity-browser-qa.mjs"
+      - ".github/workflows/fork-identity-qa.yml"
+      - "pnpm-lock.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-identity-qa-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: Identity browser acceptance and screenshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Install Chromium
+        run: vp exec --filter @t3tools/web -- playwright install --with-deps chromium
+
+      - name: Verify identity UI with synthetic service fixtures
+        env:
+          Q1_IDENTITY_QA_OUTPUT: ${{ runner.temp }}/mic-identity-qa
+        run: node scripts/fork/mic-identity-browser-qa.mjs
+
+      - name: Upload screenshots and acceptance results
+        id: evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mic-identity-browser-qa-${{ github.sha }}
+          path: ${{ runner.temp }}/mic-identity-qa/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Link review evidence
+        if: always() && steps.evidence.outputs.artifact-url != ''
+        env:
+          ARTIFACT_URL: ${{ steps.evidence.outputs.artifact-url }}
+        run: |
+          printf '### mic.sc identity UI evidence\n\n[Screenshots and acceptance results](%s)\n\nReal Chromium using synthetic Clerk, authority, gateway and provider fixtures. This does not certify live Clerk or production backend access.\n' "$ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"

@@ -1,5 +1,5 @@
 import { expandHomePath } from "../../pathExpansion.ts";
-import type { ServerProvider } from "@t3tools/contracts";
+import type { ModelSelection, ThreadId, ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
@@ -17,7 +17,11 @@ import {
   isPrismIdentityRequired,
   prismEndpointChanges,
 } from "./PrismEnvironment.ts";
-import { withPrismRouteOption } from "./PrismRouting.ts";
+import {
+  getMicPrismThreadEndpoint,
+  publishMicPrismActiveBinding,
+} from "../mic-identity/MicPrismThreads.ts";
+import { micPrismBinding, withMicPrismReadiness, withPrismRouteOption } from "./PrismRouting.ts";
 import { makePrismRoutedAdapter } from "./PrismRoutedAdapter.ts";
 
 /** Decorate existing Claude/Codex drivers; retain their native auth and maintenance paths. */
@@ -37,20 +41,25 @@ export const withPrismProvider = <Config extends { readonly homePath: string }, 
       const { baseDir } = yield* ServerConfig;
       const direct = yield* driver.create(input);
       const lock = yield* Semaphore.make(1);
-      let cached: { baseUrl: string; apiKey: string; instance: typeof direct } | undefined;
-      const proxy = () =>
+      const cache = new Map<string, { baseUrl: string; apiKey: string; instance: typeof direct }>();
+      const proxy = (threadId: ThreadId, selection: ModelSelection | undefined) =>
         lock.withPermits(1)(
           Effect.gen(function* () {
-            if (isPrismIdentityRequired()) {
+            const identity = isPrismIdentityRequired();
+            const endpoint = identity
+              ? getMicPrismThreadEndpoint(threadId, micPrismBinding(selection))
+              : currentPrismEndpoint();
+            if (!endpoint) {
+              if (!identity) return undefined;
               return yield* new ProviderAdapterRequestError({
                 provider: driver.driverKind,
                 method: "prism.setup",
                 detail:
-                  "Prism authorization required: mic.sc inference credentials are not available for this provider session.",
+                  "Prism authorization required: connect this thread to your mic.sc account before sending a turn.",
               });
             }
-            const endpoint = currentPrismEndpoint();
-            if (!endpoint) return undefined;
+            const cacheKey = identity ? threadId : "legacy";
+            const cached = cache.get(cacheKey);
             if (cached?.baseUrl === endpoint.baseUrl && cached.apiKey === endpoint.apiKey)
               return cached.instance.adapter;
             let config = input.config;
@@ -70,19 +79,31 @@ export const withPrismProvider = <Config extends { readonly homePath: string }, 
                 "prism",
                 "providers",
                 encodeURIComponent(input.instanceId),
-                "codex-home",
+                ...(identity
+                  ? [
+                      "threads",
+                      encodeURIComponent(threadId),
+                      encodeURIComponent(micPrismBinding(selection) ?? "missing"),
+                    ]
+                  : ["codex-home"]),
               );
               yield* materializeCodexProxyHome({
                 homeDir,
-                endpoint,
+                endpoint: identity ? { ...endpoint, apiKeyEnv: "Q1_PRISM_BROKER_TOKEN" } : endpoint,
                 ...(input.config.homePath
                   ? { sharedHomeDir: path.resolve(expandHomePath(input.config.homePath)) }
                   : {}),
               });
+              if (identity)
+                environment.push({
+                  name: "Q1_PRISM_BROKER_TOKEN",
+                  value: endpoint.apiKey,
+                  sensitive: true,
+                });
               config = { ...config, homePath: homeDir, shadowHomePath: "" };
             }
             const instance = yield* driver.create({ ...input, config, environment });
-            cached = { baseUrl: endpoint.baseUrl, apiKey: endpoint.apiKey, instance };
+            cache.set(cacheKey, { baseUrl: endpoint.baseUrl, apiKey: endpoint.apiKey, instance });
             return instance.adapter;
           }).pipe(
             Effect.provide(context),
@@ -100,6 +121,14 @@ export const withPrismProvider = <Config extends { readonly homePath: string }, 
       const adapter = yield* makePrismRoutedAdapter({
         direct: direct.adapter,
         enabled: isPrismEnabled,
+        allowDirectFallback: () => !isPrismIdentityRequired(),
+        onSessionRoute: (threadId, selection, usingPrism) =>
+          publishMicPrismActiveBinding(
+            threadId,
+            usingPrism ? micPrismBinding(selection) : "direct",
+            selection,
+          ),
+        onSessionStopped: (threadId) => publishMicPrismActiveBinding(threadId, undefined),
         proxy,
       });
       const decorate = (snapshot: ServerProvider) =>
@@ -109,9 +138,11 @@ export const withPrismProvider = <Config extends { readonly homePath: string }, 
                 ...snapshot,
                 status: "ready",
                 auth: { status: "authenticated", type: "prism", label: "Prism pool" },
-                message: "Prism pool with local direct-provider fallback",
+                message: isPrismIdentityRequired()
+                  ? "Prism available. Connect this thread with mic.sc to authorize inference."
+                  : "Prism pool with local direct-provider fallback",
               }
-            : snapshot,
+            : withMicPrismReadiness(snapshot, isPrismEnabled() && isPrismIdentityRequired()),
           isPrismEnabled(),
         );
       return {

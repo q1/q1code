@@ -111,6 +111,42 @@ const observe = Effect.fn("test.observe")(function* (
 });
 
 it.layer(NodeServices.layer)("Prism routed adapter", (it) => {
+  it.effect("identity policy stays fixed when flags change during proxy setup", () =>
+    Effect.gen(function* () {
+      const direct = yield* fake("direct");
+      let identity = true;
+      const adapter = yield* makePrismRoutedAdapter({
+        direct: direct.adapter,
+        enabled: () => true,
+        allowDirectFallback: () => !identity,
+        proxy: () =>
+          Effect.sync(() => {
+            identity = false;
+          }).pipe(Effect.andThen(Effect.fail(failure))),
+      });
+      yield* adapter.startSession(start).pipe(Effect.flip);
+      assert.equal(direct.starts.length, 0);
+    }),
+  );
+  it.effect(
+    "identity routing never falls back to local credentials after an unclassified failure",
+    () =>
+      Effect.gen(function* () {
+        const direct = yield* fake("direct");
+        const pooled = yield* fake("pooled", true);
+        const adapter = yield* makePrismRoutedAdapter({
+          direct: direct.adapter,
+          enabled: () => true,
+          allowDirectFallback: () => false,
+          proxy: () => Effect.succeed(pooled.adapter),
+        });
+        yield* adapter.startSession(start);
+        const error = yield* adapter.sendTurn({ threadId, input: "hello" }).pipe(Effect.flip);
+        assert.equal(error._tag, "ProviderAdapterRequestError");
+        assert.equal(direct.turns.length, 0);
+        assert.equal(direct.starts.length, 0);
+      }),
+  );
   it.effect(
     "flags off and explicit direct both avoid creating a proxy and strip the routing option",
     () =>
