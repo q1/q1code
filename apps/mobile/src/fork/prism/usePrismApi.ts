@@ -16,6 +16,7 @@ import {
   getPrismLoginStatus,
   getPrismRouting,
   getPrismStatus,
+  getPrismIdentityConfig,
   listPrismAccounts,
   patchPrismAccount,
   restartPrism,
@@ -28,11 +29,12 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { HttpClient } from "effect/unstable/http";
-import { useMemo } from "react";
+import { useContext, useMemo } from "react";
 
 import { runtime } from "../../lib/runtime";
 import { usePreparedConnection } from "../../state/session";
 import type { PrismCallError } from "./prismSettings.logic";
+import { MicPrismTokenContext } from "./micIdentityContext";
 
 export type PrismResult<A> =
   | { readonly _tag: "ok"; readonly value: A }
@@ -42,13 +44,16 @@ type Call<A> = (
   input: PrismClientInput,
 ) => Effect.Effect<A, PrismClientError, HttpClient.HttpClient>;
 
-export function bindPrismCalls(prepared: PrismClientInput["prepared"]) {
+export function bindPrismCalls(
+  prepared: PrismClientInput["prepared"],
+  micScToken?: PrismClientInput["micScToken"],
+) {
   const run = <A>(call: Call<A>): Promise<PrismResult<A>> =>
     runtime
       .runPromise(
         Effect.gen(function* () {
           const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
-          return yield* call({ prepared, signer });
+          return yield* call({ prepared, signer, ...(micScToken ? { micScToken } : {}) });
         }).pipe(
           Effect.match({
             onFailure: (error): PrismResult<A> => ({ _tag: "error", error }),
@@ -59,6 +64,7 @@ export function bindPrismCalls(prepared: PrismClientInput["prepared"]) {
       .catch((): PrismResult<A> => ({ _tag: "error", error: { _tag: "UnknownError" } }));
 
   return {
+    identityConfig: () => run(getPrismIdentityConfig),
     status: () => run(getPrismStatus),
     restart: () => run(restartPrism),
     listAccounts: () => run(listPrismAccounts),
@@ -85,5 +91,9 @@ export type PrismApi = ReturnType<typeof bindPrismCalls>;
 /** `null` until the environment has a prepared connection. */
 export function usePrismApi(environmentId: EnvironmentId): PrismApi | null {
   const prepared = Option.getOrNull(usePreparedConnection(environmentId));
-  return useMemo(() => (prepared ? bindPrismCalls(prepared) : null), [prepared]);
+  const micScToken = useContext(MicPrismTokenContext);
+  return useMemo(
+    () => (prepared ? bindPrismCalls(prepared, micScToken) : null),
+    [prepared, micScToken],
+  );
 }

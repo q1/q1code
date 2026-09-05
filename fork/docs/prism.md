@@ -24,9 +24,14 @@ before promoting another gateway.
 
 Claude and Codex use the Prism pool by default. Choose **Connection → Direct
 provider** in a thread's model options to use its local provider credentials.
-When Prism cannot serve a turn, q1code retries it once on the local provider and
-shows a warning. Retrying a turn may repeat tools that already ran. Cancelling a
-turn does not trigger fallback.
+For an eligible failure before output or tool activity, q1code retries once on
+the local provider and shows a warning. Quota/reserve exhaustion, authentication
+or permission refusals, and an explicit gateway no-fallback response do not
+trigger direct retry. Output and tool effects are never replayed. Cancelling or
+interrupting a turn does not trigger fallback.
+
+The optional [mic.sc identity integration](mic-identity.md) uses the independently
+authorized service API and has separate credential and acceptance requirements.
 
 The primary gateway tracks known Claude and Codex quota observations and avoids
 accounts whose observed limit has not reset. Unknown quota remains unknown

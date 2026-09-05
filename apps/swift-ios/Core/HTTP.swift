@@ -58,7 +58,10 @@ public struct URLSessionHTTPTransport: HTTPTransport {
         // URLSession transparently decodes gzip responses before returning
         // their body. Applying the policy here is a final guard for requests
         // constructed outside EnvironmentAPI.
-        let (data, response) = try await session.data(for: HTTPRequestPolicy.prepare(request))
+        let (data, response) = try await session.data(
+            for: HTTPRequestPolicy.prepare(request),
+            delegate: request.value(forHTTPHeaderField: "x-mic-sc-session") == nil ? nil : PrismRequestRedirectPolicy()
+        )
         guard let httpResponse = response as? HTTPURLResponse else {
             throw HTTPError.invalidResponse
         }
@@ -76,6 +79,13 @@ public struct URLSessionHTTPTransport: HTTPTransport {
             throw HTTPError.invalidResponse
         }
         return (data, httpResponse)
+    }
+}
+
+/// A mic.sc token is bound to the requested environment and must never follow its redirect.
+private final class PrismRequestRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
 
@@ -376,7 +386,11 @@ public actor EnvironmentAPI {
         )
     }
 
-    public func prism(_ input: PrismRequest, environment: Environment) async throws -> PrismResponse {
+    public func prismIdentityConfiguration(environment: Environment) async throws -> MicPrismIdentityConfiguration {
+        try await authorized(environment: environment, path: "/api/fork/prism/identity/config", method: "GET", as: MicPrismIdentityConfiguration.self)
+    }
+
+    public func prism(_ input: PrismRequest, environment: Environment, micScToken: MicPrismTokenSource? = nil) async throws -> PrismResponse {
         guard input.path.hasPrefix("/"), !input.path.contains(".."),
               !input.path.contains("?"), !input.path.contains("#") else {
             throw HTTPError.invalidResponse
@@ -387,6 +401,7 @@ public actor EnvironmentAPI {
             path: "/api/fork/prism" + input.path,
             method: input.method,
             body: body,
+            micScToken: micScToken,
             as: PrismResponse.self
         )
     }
@@ -398,6 +413,7 @@ public actor EnvironmentAPI {
         method: String,
         body: Data? = nil,
         timeoutInterval: TimeInterval? = nil,
+        micScToken: MicPrismTokenSource? = nil,
         as type: Result.Type
     ) async throws -> Result {
         guard let credential = try await credentials.credential(for: environment.id) else {
@@ -423,6 +439,9 @@ public actor EnvironmentAPI {
                 "Bearer \(credential.accessToken)",
                 forHTTPHeaderField: "Authorization"
             )
+            if let micScToken {
+                request.setValue(try await micScToken(), forHTTPHeaderField: "x-mic-sc-session")
+            }
             return try await send(request, as: type)
 
         case .managedDPoP:
@@ -459,6 +478,9 @@ public actor EnvironmentAPI {
             if let timeoutInterval {
                 request.timeoutInterval = timeoutInterval
             }
+            if let micScToken {
+                request.setValue(try await micScToken(), forHTTPHeaderField: "x-mic-sc-session")
+            }
             do {
                 return try await send(request, as: type)
             } catch let error as HTTPError where error.isRejectedAuthorization {
@@ -488,6 +510,9 @@ public actor EnvironmentAPI {
                 )
                 if let timeoutInterval {
                     retry.timeoutInterval = timeoutInterval
+                }
+                if let micScToken {
+                    retry.setValue(try await micScToken(), forHTTPHeaderField: "x-mic-sc-session")
                 }
                 return try await send(retry, as: type)
             }

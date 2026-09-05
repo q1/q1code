@@ -28,7 +28,7 @@ export interface PrismEnvironmentRef {
   readonly label: string;
 }
 
-/** Connected environments whose `prism` flag is on, in catalog order. */
+/** Keep known Prism environments visible when disconnected, so their last state stays inspectable. */
 export function selectPrismEnvironments(
   environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -40,11 +40,7 @@ export function selectPrismEnvironments(
   ) => Pick<ExecutionEnvironmentCapabilities, "forkFlags"> | null | undefined,
 ): ReadonlyArray<PrismEnvironmentRef> {
   return environments
-    .filter(
-      (environment) =>
-        environment.connection.phase === "connected" &&
-        readForkFlag(capabilitiesOf(environment.environmentId), "prism"),
-    )
+    .filter((environment) => readForkFlag(capabilitiesOf(environment.environmentId), "prism"))
     .map((environment) => ({
       environmentId: environment.environmentId,
       label: environment.label,

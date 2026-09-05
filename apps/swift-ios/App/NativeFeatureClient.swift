@@ -420,7 +420,27 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func prism(_ input: PrismRequest, environmentID: String) async throws -> PrismResponse {
         let client = try await projectCreationClient(environmentID: environmentID)
-        return try await client.prism(input)
+        let configuration = try await prismIdentityConfiguration(environmentID: environmentID)
+        guard configuration.enabled else { return try await client.prism(input) }
+        guard let key = configuration.clerkPublishableKey,
+              key == t3ConnectController.resolution.configuration?.clerkPublishableKey else {
+            throw FeatureCapabilityUnavailable("This build is not configured for this mic.sc sign-in service")
+        }
+        let controller = t3ConnectController
+        return try await client.prism(input, micScToken: {
+            try await controller.micPrismToken(expectedPublishableKey: key)
+        })
+    }
+
+    func prismIdentityConfiguration(environmentID: String) async throws -> MicPrismIdentityConfiguration {
+        guard serverConfigsByEnvironmentID[environmentID]?.environment?.capabilities.forkFlags?["mic-identity"] == true else { return .disabled }
+        let client = try await projectCreationClient(environmentID: environmentID)
+        return try await client.prismIdentityConfiguration()
+    }
+
+    func prismSession(environmentID: String) async throws -> AuthSessionState {
+        let client = try await projectCreationClient(environmentID: environmentID)
+        return try await client.authSession()
     }
 
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {

@@ -106,6 +106,8 @@ public protocol FeatureClient: AnyObject {
     ) async throws -> FeatureAutomaticSettlementSettings
 
     func prism(_ input: PrismRequest, environmentID: String) async throws -> PrismResponse
+    func prismSession(environmentID: String) async throws -> AuthSessionState
+    func prismIdentityConfiguration(environmentID: String) async throws -> MicPrismIdentityConfiguration
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage]
     func pullRequestLists(_ input: PullRequestListInput) async throws
         -> [FeaturePullRequestEnvironmentList]
@@ -254,6 +256,12 @@ public extension FeatureClient {
     func addProject(path: String) async throws {}
     func prism(_ input: PrismRequest, environmentID: String) async throws -> PrismResponse {
         throw FeatureCapabilityUnavailable("Prism")
+    }
+    func prismSession(environmentID: String) async throws -> AuthSessionState {
+        throw FeatureCapabilityUnavailable("Prism session")
+    }
+    func prismIdentityConfiguration(environmentID: String) async throws -> MicPrismIdentityConfiguration {
+        .disabled
     }
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {
         []

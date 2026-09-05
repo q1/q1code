@@ -71,7 +71,14 @@ function OverviewLoader(props: {
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
-    void Promise.all([api.status(), api.listAccounts()]).then(([status, accounts]) => {
+    void (async () => {
+      const status = await api.status();
+      const accounts =
+        status._tag === "ok" &&
+        status.value.state === "ready" &&
+        status.value.capabilities?.accountDetails !== false
+          ? await api.listAccounts()
+          : null;
       if (cancelled) return;
       onOverview(
         environmentId,
@@ -79,11 +86,11 @@ function OverviewLoader(props: {
           ? {
               _tag: "loaded",
               state: status.value.state,
-              accountCount: accounts._tag === "ok" ? accounts.value.length : null,
+              accountCount: accounts?._tag === "ok" ? accounts.value.length : null,
             }
           : { _tag: "error" },
       );
-    });
+    })();
     return () => {
       cancelled = true;
     };
