@@ -111,6 +111,42 @@ const observe = Effect.fn("test.observe")(function* (
 });
 
 it.layer(NodeServices.layer)("Prism routed adapter", (it) => {
+  it.effect("legacy startup fallback survives the failed proxy's exit event", () =>
+    Effect.gen(function* () {
+      const direct = yield* fake("direct");
+      const proxy = yield* fake("proxy");
+      const exitObserved = Promise.withResolvers<void>();
+      const selected: boolean[] = [];
+      const adapter = yield* makePrismRoutedAdapter({
+        direct: direct.adapter,
+        enabled: () => true,
+        onSessionStopped: () => exitObserved.resolve(),
+        onSessionRoute: (_id, _selection, pooled) => selected.push(pooled),
+        proxy: () =>
+          Effect.succeed({
+            ...proxy.adapter,
+            startSession: () =>
+              proxy
+                .emit({
+                  type: "session.exited",
+                  eventId: EventId.make("startup-exit"),
+                  provider,
+                  threadId,
+                  createdAt: at,
+                  payload: { reason: "startup failed" },
+                })
+                .pipe(
+                  Effect.andThen(Effect.promise(() => exitObserved.promise)),
+                  Effect.andThen(Effect.fail(failure)),
+                ),
+          }),
+      });
+      yield* adapter.startSession(start);
+      assert.equal(direct.starts.length, 1);
+      assert.equal(direct.stops(), 0);
+      assert.deepEqual(selected, [false]);
+    }),
+  );
   it.effect("identity policy stays fixed when flags change during proxy setup", () =>
     Effect.gen(function* () {
       const direct = yield* fake("direct");
