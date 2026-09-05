@@ -35,6 +35,15 @@ export interface MicIdentityClientInput {
   readonly timeoutMs?: number;
   /** Binds an operation to the initiating signed-in account across async steps. */
   readonly isCurrent?: () => boolean;
+  /** Discovery screens must distinguish a signed-in account from an unpaired host. */
+  readonly allowUnpaired?: boolean;
+  /** Preserve the host the user saw when initiating an operation. */
+  readonly expectedService?: {
+    readonly id: string;
+    readonly pairingRevision: number;
+    readonly apiUrl?: string;
+    readonly inferenceUrl?: string;
+  };
 }
 
 const decodeServiceUrl = Schema.decodeUnknownEffect(MicIdentityServiceUrl);
@@ -141,10 +150,21 @@ export const getMicIdentityAccess = Effect.fn("getMicIdentityAccess")(
       const discovery = normalizeMicPrismDiscovery(
         yield* read(MIC_IDENTITY_API_PATHS.prismService, MicPrismDiscoveryWire),
       );
-      if (discovery.service === null) {
+      if (
+        input.expectedService &&
+        (discovery.service?.id !== input.expectedService.id ||
+          discovery.service.pairingRevision !== input.expectedService.pairingRevision ||
+          (input.expectedService.apiUrl !== undefined &&
+            discovery.service.apiUrl !== input.expectedService.apiUrl) ||
+          (input.expectedService.inferenceUrl !== undefined &&
+            discovery.service.inferenceUrl !== input.expectedService.inferenceUrl))
+      ) {
+        return yield* new MicIdentityUnavailableError({ reason: "revoked-service" });
+      }
+      if (discovery.service === null && !input.allowUnpaired) {
         return yield* new MicIdentityUnavailableError({ reason: "unpaired-service" });
       }
-      if (discovery.service.status !== "paired") {
+      if (discovery.service && discovery.service.status !== "paired") {
         return yield* new MicIdentityUnavailableError({ reason: "revoked-service" });
       }
       // A slow discovery call cannot extend the authority's expiry.

@@ -12,6 +12,8 @@ import {
   type PrismClientInput,
   type PrismLoginProvider,
   completePrismLogin,
+  connectMicPrismThread,
+  disconnectMicPrismThread,
   deletePrismAccount,
   getPrismLoginStatus,
   getPrismRouting,
@@ -65,6 +67,10 @@ export function bindPrismCalls(
 
   return {
     identityConfig: () => run(getPrismIdentityConfig),
+    connectIdentityThread: (threadId: string) =>
+      run((input) => connectMicPrismThread({ ...input, threadId })),
+    disconnectIdentityThread: (threadId: string) =>
+      run((input) => disconnectMicPrismThread({ ...input, threadId })),
     status: () => run(getPrismStatus),
     restart: () => run(restartPrism),
     listAccounts: () => run(listPrismAccounts),

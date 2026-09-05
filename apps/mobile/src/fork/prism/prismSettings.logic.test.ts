@@ -47,6 +47,14 @@ describe("selectPrismEnvironments", () => {
     expect(selected[0]?.label).toBe("env a");
   });
 
+  it("exposes mic.sc Prism when the local sidecar flag is off", () => {
+    expect(
+      selectPrismEnvironments([environment("a", "connected")], () => ({
+        forkFlags: { prism: false, "mic-identity": true },
+      })),
+    ).toHaveLength(1);
+  });
+
   it("reads the registry default (off) against upstream servers with no forkFlags", () => {
     expect(selectPrismEnvironments([environment("a", "connected")], () => ({}))).toEqual([]);
   });

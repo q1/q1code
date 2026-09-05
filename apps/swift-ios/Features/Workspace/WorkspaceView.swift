@@ -173,7 +173,7 @@ public struct WorkspaceView: View {
         }
         .sheet(isPresented: $showingPrism) {
             NavigationStack {
-                PrismView(client: model.client, environments: model.snapshot.environments)
+                PrismView(client: model.client, environments: model.snapshot.environments, threads: model.snapshot.threads)
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingPrism = false } } }
             }
         }

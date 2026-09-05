@@ -27,11 +27,13 @@ type Adapter = ProviderAdapterShape<ProviderAdapterError>;
 interface SessionRoute {
   adapter: Adapter;
   start: ProviderSessionStartInput;
+  lifecycle: number;
   turn?: {
     input: ProviderSendTurnInput;
     logicalId?: TurnId;
     nativeId?: TurnId;
     retried: boolean;
+    allowDirectFallback: boolean;
     cancelled: boolean;
     fallbackBlocked: boolean;
     policyRefused: boolean;
@@ -114,8 +116,20 @@ const producesOutput = (event: ProviderRuntimeEvent): boolean => {
 export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function* (input: {
   direct: Adapter;
   enabled: () => boolean;
-  proxy: () => Effect.Effect<Adapter | undefined, ProviderAdapterError>;
+  allowDirectFallback?: () => boolean;
+  onSessionRoute?: (
+    threadId: ThreadId,
+    selection: ProviderSessionStartInput["modelSelection"],
+    usingPrism: boolean,
+  ) => void;
+  onSessionStopped?: (threadId: ThreadId) => void;
+  proxy: (
+    threadId: ThreadId,
+    selection: ProviderSessionStartInput["modelSelection"],
+  ) => Effect.Effect<Adapter | undefined, ProviderAdapterError>;
 }) {
+  const blocksFallback = (error: unknown) =>
+    input.allowDirectFallback?.() === false || blocksDirectFallback(error);
   const scope = yield* Scope.Scope;
   const crypto = yield* Crypto.Crypto;
   const nextEventId = crypto.randomUUIDv4.pipe(Effect.orDie, Effect.map(EventId.make));
@@ -144,6 +158,7 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
 
   const move = Effect.fn("prism.moveSession")(function* (route: SessionRoute, adapter: Adapter) {
     if (route.adapter === adapter) return;
+    const lifecycle = ++route.lifecycle;
     const old = route.adapter;
     const current = (yield* old.listSessions()).find(
       (session) => session.threadId === route.start.threadId,
@@ -157,8 +172,14 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
         ...(current?.resumeCursor !== undefined ? { resumeCursor: current.resumeCursor } : {}),
       }),
     );
-    if (sessions.get(route.start.threadId) !== route)
+    if (sessions.get(route.start.threadId) !== route || route.lifecycle !== lifecycle)
       yield* adapter.stopSession(route.start.threadId);
+    else
+      input.onSessionRoute?.(
+        route.start.threadId,
+        route.start.modelSelection,
+        adapter !== input.direct,
+      );
   });
 
   const warning = Effect.fn("prism.warning")(function* (route: SessionRoute, message: string) {
@@ -191,7 +212,14 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
     const turn = route.turn;
     if (!turn || turn.cancelled) return undefined;
     if (turn.retried) return yield* Deferred.await(turn.retryDone);
-    if (turn.fallbackBlocked || turn.policyRefused || turn.hasOutput) return undefined;
+    if (
+      !turn.allowDirectFallback ||
+      input.allowDirectFallback?.() === false ||
+      turn.fallbackBlocked ||
+      turn.policyRefused ||
+      turn.hasOutput
+    )
+      return undefined;
     if (route.adapter === input.direct) return undefined;
     turn.retried = true;
     return yield* Effect.gen(function* () {
@@ -216,6 +244,10 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
   ) {
     const route = sessions.get(event.threadId);
     if (!route || route.adapter !== source) return;
+    if (event.type === "session.exited") {
+      route.lifecycle++;
+      input.onSessionStopped?.(event.threadId);
+    }
     const turn = route.turn;
     if (turn && event.turnId !== undefined) {
       if (turn.nativeId !== undefined && turn.nativeId !== event.turnId) return;
@@ -224,7 +256,7 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
     }
     if (turn && producesOutput(event)) turn.hasOutput = true;
     // A provider can announce its own retry before later emitting a generic failure.
-    if (turn && event.type === "runtime.warning" && blocksDirectFallback(event.payload)) {
+    if (turn && event.type === "runtime.warning" && blocksFallback(event.payload)) {
       turn.policyRefused = true;
     }
     const failed =
@@ -236,7 +268,10 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
       turn &&
       source !== input.direct &&
       !turn.fallbackBlocked &&
-      (turn.hasOutput || turn.policyRefused || blocksDirectFallback(event.payload))
+      (!turn.allowDirectFallback ||
+        turn.hasOutput ||
+        turn.policyRefused ||
+        blocksFallback(event.payload))
     ) {
       yield* blockRetry(route);
     }
@@ -282,9 +317,10 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
   yield* subscribe(input.direct);
   const select = Effect.fn("prism.selectAdapter")(function* (
     selection: ProviderSessionStartInput["modelSelection"],
+    threadId: ThreadId,
   ) {
     if (!input.enabled() || prismRoute(selection) === "direct") return input.direct;
-    const proxy = yield* input.proxy();
+    const proxy = yield* input.proxy(threadId, selection);
     if (!proxy) return input.direct;
     yield* subscribe(proxy);
     return proxy;
@@ -294,13 +330,16 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
     ...input.direct,
     streamEvents: Stream.fromPubSub(events),
     startSession: Effect.fn("prism.startSession")(function* (start) {
-      const selected = yield* select(start.modelSelection).pipe(
+      const allowDirectFallback = input.allowDirectFallback?.() !== false;
+      const selected = yield* select(start.modelSelection, start.threadId).pipe(
         Effect.catch((error) =>
-          blocksDirectFallback(error) ? Effect.fail(error) : Effect.succeed(input.direct),
+          !allowDirectFallback || blocksFallback(error)
+            ? Effect.fail(error)
+            : Effect.succeed(input.direct),
         ),
       );
       // Install before starting: native adapters can emit their first event during startSession.
-      const route: SessionRoute = { adapter: selected, start };
+      const route: SessionRoute = { adapter: selected, start, lifecycle: 0 };
       sessions.set(start.threadId, route);
       if (
         selected === input.direct &&
@@ -311,7 +350,8 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
       }
       const result = yield* selected.startSession(cleanStart(start)).pipe(
         Effect.catch((error) => {
-          if (selected === input.direct || blocksDirectFallback(error)) return Effect.fail(error);
+          if (selected === input.direct || !allowDirectFallback || blocksFallback(error))
+            return Effect.fail(error);
           route.adapter = input.direct;
           return selected
             .stopSession(start.threadId)
@@ -323,20 +363,31 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
           }),
         ),
       );
+      if (sessions.get(start.threadId) === route && route.lifecycle === 0)
+        input.onSessionRoute?.(
+          start.threadId,
+          start.modelSelection,
+          route.adapter !== input.direct,
+        );
+      else yield* route.adapter.stopSession(start.threadId);
       return result;
     }),
     sendTurn: Effect.fn("prism.sendTurn")(function* (turnInput) {
+      const allowDirectFallback = input.allowDirectFallback?.() !== false;
       const route = yield* routeFor(turnInput.threadId);
       const selection = turnInput.modelSelection ?? route.start.modelSelection;
       route.start = { ...route.start, modelSelection: selection };
-      const selected = yield* select(selection).pipe(
+      const selected = yield* select(selection, turnInput.threadId).pipe(
         Effect.catch((error) =>
-          blocksDirectFallback(error) ? Effect.fail(error) : Effect.succeed(input.direct),
+          !allowDirectFallback || blocksFallback(error)
+            ? Effect.fail(error)
+            : Effect.succeed(input.direct),
         ),
       );
       yield* move(route, selected).pipe(
         Effect.catch((error) => {
-          if (selected === input.direct || blocksDirectFallback(error)) return Effect.fail(error);
+          if (selected === input.direct || !allowDirectFallback || blocksFallback(error))
+            return Effect.fail(error);
           return warning(
             route,
             "Prism could not start. Using local direct-provider credentials.",
@@ -346,6 +397,7 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
       const turn: NonNullable<SessionRoute["turn"]> = {
         input: turnInput,
         retried: false,
+        allowDirectFallback,
         cancelled: false,
         fallbackBlocked: false,
         policyRefused: false,
@@ -356,12 +408,16 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
         >(),
       };
       route.turn = turn;
+      const lifecycle = route.lifecycle;
       const result = yield* route.adapter.sendTurn(cleanTurn(turnInput)).pipe(
         Effect.catch((error) => {
           if (
             route.adapter !== input.direct &&
             !turn.fallbackBlocked &&
-            (turn.hasOutput || turn.policyRefused || blocksDirectFallback(error))
+            (!turn.allowDirectFallback ||
+              turn.hasOutput ||
+              turn.policyRefused ||
+              blocksFallback(error))
           ) {
             return blockRetry(route).pipe(Effect.andThen(Effect.fail(error)));
           }
@@ -375,6 +431,12 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
         : result;
       turn.logicalId ??= completedStart.turnId;
       if (!turn.retried) turn.nativeId = result.turnId;
+      if (sessions.get(turnInput.threadId) === route && route.lifecycle === lifecycle)
+        input.onSessionRoute?.(
+          turnInput.threadId,
+          route.start.modelSelection,
+          route.adapter !== input.direct,
+        );
       return { ...completedStart, turnId: turn.logicalId };
     }),
     interruptTurn: (id) =>
@@ -389,6 +451,7 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
         Effect.flatMap((route) => {
           if (route.turn) route.turn.cancelled = true;
           sessions.delete(id);
+          input.onSessionStopped?.(id);
           return route.adapter.stopSession(id);
         }),
       ),
@@ -396,6 +459,7 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
       Effect.gen(function* () {
         for (const route of sessions.values()) {
           if (route.turn) route.turn.cancelled = true;
+          input.onSessionStopped?.(route.start.threadId);
         }
         sessions.clear();
         yield* Effect.forEach(subscribed, (adapter) => adapter.stopAll(), { discard: true });

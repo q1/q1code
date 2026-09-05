@@ -10,10 +10,10 @@ import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondab
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 export const MIC_IDENTITY_SESSION_HEADER = "x-mic-sc-session";
-export const MIC_IDENTITY_CLERK_TEMPLATE = "convex";
 export const MIC_IDENTITY_API_PATHS = {
   session: "/v1/identity",
   prismService: "/v1/prism/discovery",
+  credential: "/v1/prism/credentials",
 } as const;
 
 const Identifier = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_.:~-]{1,256}$/));
@@ -80,6 +80,7 @@ const ServiceOrigin = MicIdentityServiceUrl.check(
 export const MicIdentityWire = Schema.Struct({
   contractVersion: Schema.Literal(1),
   subject: Identifier,
+  sessionId: Schema.optionalKey(Identifier),
   role: Schema.Literals(["global_admin", "member"]),
   permissions: Permissions,
   authorizationExpiresAt: EpochMillis,
@@ -115,7 +116,7 @@ export type MicIdentityCapabilities = typeof MicIdentityCapabilities.Type;
 export const MicIdentitySession = Schema.Struct({
   version: Schema.Literal(1),
   subject: Identifier,
-  /** Older local adapters may supply this; the identity authority does not. */
+  /** Verified Clerk session binding, supplied by the session-aware authority. */
   sessionId: Schema.optionalKey(Identifier),
   state: Schema.Literals(["active", "disabled", "revoked"]),
   globalAdmin: Schema.Boolean,
@@ -160,6 +161,7 @@ export function normalizeMicIdentity(identity: MicIdentityWire): MicIdentitySess
   return {
     version: 1,
     subject: identity.subject,
+    ...(identity.sessionId ? { sessionId: identity.sessionId } : {}),
     state: "active",
     globalAdmin: identity.role === "global_admin",
     permissions,

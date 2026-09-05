@@ -246,6 +246,30 @@ export const getPrismIdentityAccess = (
     client.prism.identityAccess({ headers }),
   );
 
+export const connectMicPrismThread = (input: PrismClientInput & { readonly threadId: string }) =>
+  call(
+    input,
+    "PUT",
+    "connectIdentityThread",
+    (client, headers) =>
+      client.prism.connectIdentityThread({ headers, params: { threadId: input.threadId } }),
+    { threadId: input.threadId },
+  );
+
+export const disconnectMicPrismThread = (
+  input: PrismClientInput & { readonly threadId: string },
+) => {
+  const { micScToken: _micScToken, ...environmentInput } = input;
+  return call(
+    environmentInput,
+    "DELETE",
+    "disconnectIdentityThread",
+    (client, headers) =>
+      client.prism.disconnectIdentityThread({ headers, params: { threadId: input.threadId } }),
+    { threadId: input.threadId },
+  );
+};
+
 /** Turn the Limits-view publication of Prism's accounts on or off; answers with the status (`usageSource` reflects the new value). */
 export const setPrismUsageSource = (
   input: PrismClientInput & { readonly enabled: boolean },

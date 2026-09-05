@@ -2,6 +2,7 @@ import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
+import { micPrismEngineForSession } from "./fork/mic-identity/MicPrismThreads.ts"; // fork: mic-identity
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -495,7 +496,7 @@ const makeWsRpcLayer = (
               ),
               Effect.orElseSucceed(() => null),
             );
-      const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const orchestrationEngine = yield* micPrismEngineForSession(currentSessionId); // fork: mic-identity
       const threadDeletionReactor = yield* ThreadDeletionReactor;
       const analytics = yield* AnalyticsService.AnalyticsService;
       // Every command dispatched on this connection carries the connecting

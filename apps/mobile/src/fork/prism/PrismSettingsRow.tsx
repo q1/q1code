@@ -4,6 +4,7 @@
  * on. With the flag off everywhere this renders nothing, so Settings matches
  * upstream row for row.
  */
+import { readForkFlag } from "@t3tools/client-runtime/fork";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -38,24 +39,37 @@ export function PrismSettingsRow() {
 
   if (targets.length === 0) return null;
 
-  const value = summarizePrismOverviews(
-    targets.map((target) => overviews.get(target.environmentId) ?? { _tag: "loading" }),
+  const usesMicIdentity = targets.some((target) =>
+    readForkFlag(configs.get(target.environmentId)?.environment.capabilities, "mic-identity"),
   );
+  const value = usesMicIdentity
+    ? null
+    : summarizePrismOverviews(
+        targets.map((target) => overviews.get(target.environmentId) ?? { _tag: "loading" }),
+      );
   return (
     <SettingsSection title="Prism">
       <SettingsRow
         icon="server.rack"
-        label="Accounts"
+        label={usesMicIdentity ? "Service and access" : "Accounts"}
         target="SettingsPrism"
         {...(value ? { value } : {})}
       />
-      {targets.map((target) => (
-        <OverviewLoader
-          key={target.environmentId}
-          environmentId={target.environmentId}
-          onOverview={handleOverview}
-        />
-      ))}
+      {targets
+        .filter(
+          (target) =>
+            !readForkFlag(
+              configs.get(target.environmentId)?.environment.capabilities,
+              "mic-identity",
+            ),
+        )
+        .map((target) => (
+          <OverviewLoader
+            key={target.environmentId}
+            environmentId={target.environmentId}
+            onOverview={handleOverview}
+          />
+        ))}
     </SettingsSection>
   );
 }

@@ -29,6 +29,8 @@ describe("prism api contract", () => {
     expect(Object.keys(group.endpoints).sort()).toEqual(
       [
         "cancelLogin",
+        "connectIdentityThread",
+        "disconnectIdentityThread",
         "deleteAccount",
         "getRouting",
         "getUsage",

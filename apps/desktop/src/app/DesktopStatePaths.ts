@@ -1,4 +1,4 @@
-import { BRAND } from "@q1code/core/brand"; // fork: base
+import { BRAND } from "@t3tools/client-runtime/fork/brand"; // fork: base
 import * as Option from "effect/Option";
 
 export type JoinPath = (first: string, ...segments: string[]) => string;

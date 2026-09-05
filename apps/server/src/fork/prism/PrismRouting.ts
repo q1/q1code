@@ -16,14 +16,39 @@ export const prismRoute = (selection: ModelSelection | undefined): "prism" | "di
     ? "direct"
     : "prism";
 
+/** An opaque server-stamped reference, never an inference or environment credential. */
+export const MIC_PRISM_BINDING_OPTION = "q1.mic-binding";
+export const micPrismBinding = (selection: ModelSelection | undefined): string | undefined => {
+  const value = selection?.options?.find((option) => option.id === MIC_PRISM_BINDING_OPTION)?.value;
+  return typeof value === "string" ? value : undefined;
+};
+
+/** Installation is required; the environment checks the signed-in thread at execution time. */
+export function withMicPrismReadiness<
+  A extends { readonly enabled: boolean; readonly installed: boolean },
+>(snapshot: A, enabled: boolean) {
+  return enabled && snapshot.enabled && snapshot.installed
+    ? {
+        ...snapshot,
+        status: "ready" as const,
+        auth: { status: "authenticated" as const, type: "prism", label: "mic.sc Prism" },
+        message: "Prism available. Connect this thread with mic.sc to authorize inference.",
+      }
+    : snapshot;
+}
+
 /** This option controls q1code routing and must never be sent to a provider CLI. */
 export const withoutPrismRoute = (
   selection: ModelSelection | undefined,
 ): ModelSelection | undefined =>
-  selection?.options?.some((option) => option.id === PRISM_ROUTE_OPTION)
+  selection?.options?.some(
+    (option) => option.id === PRISM_ROUTE_OPTION || option.id === MIC_PRISM_BINDING_OPTION,
+  )
     ? {
         ...selection,
-        options: selection.options.filter((option) => option.id !== PRISM_ROUTE_OPTION),
+        options: selection.options.filter(
+          (option) => option.id !== PRISM_ROUTE_OPTION && option.id !== MIC_PRISM_BINDING_OPTION,
+        ),
       }
     : selection;
 

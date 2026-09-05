@@ -39,6 +39,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import { HttpClientResponse } from "effect/unstable/http";
 import * as Headers from "effect/unstable/http/Headers";
@@ -52,6 +53,15 @@ import {
   requireEnvironmentScope,
 } from "../../auth/http.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as SessionStore from "../../auth/SessionStore.ts";
+import {
+  connectMicPrismThreadRequest,
+  disconnectMicPrismThreadRequest,
+} from "../mic-identity/MicPrismThreadHttp.ts";
+import {
+  closeAllMicPrismThreads,
+  revokeMicPrismEnvironmentSession,
+} from "../mic-identity/MicPrismThreads.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ForkFlags from "../ForkFlags.ts";
@@ -165,6 +175,17 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
     const proxy = yield* Prism.PrismService;
     const sync = yield* PrismSync.PrismSyncService;
     const flags = yield* ForkFlags.ForkFlagsService;
+    const sessions = yield* Effect.serviceOption(SessionStore.SessionStore);
+    if (Option.isSome(sessions))
+      yield* sessions.value.streamChanges.pipe(
+        Stream.runForEach((change) =>
+          change.type === "clientRemoved"
+            ? Effect.promise(() => revokeMicPrismEnvironmentSession(change.sessionId))
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+    yield* Effect.addFinalizer(() => Effect.promise(closeAllMicPrismThreads));
     const config = yield* ServerConfig.ServerConfig;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -454,6 +475,19 @@ export const prismHttpApiLayer = HttpApiBuilder.group(
       });
 
     return handlers
+      .handle("connectIdentityThread", ({ params }) =>
+        annotateEnvironmentRequest("connectIdentityThread").pipe(
+          Effect.andThen(privateResponse),
+          Effect.andThen(connectMicPrismThreadRequest(params.threadId)),
+          Effect.provideService(ForkFlags.ForkFlagsService, flags),
+        ),
+      )
+      .handle("disconnectIdentityThread", ({ params }) =>
+        annotateEnvironmentRequest("disconnectIdentityThread").pipe(
+          Effect.andThen(privateResponse),
+          Effect.andThen(disconnectMicPrismThreadRequest(params.threadId)),
+        ),
+      )
       .handle("identityConfig", () =>
         annotateEnvironmentRequest("identityConfig").pipe(
           Effect.andThen(requireEnvironmentScope(AuthOrchestrationReadScope)),

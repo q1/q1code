@@ -250,6 +250,10 @@
     "./thread-pull-request-compatibility": {
       "types": "./src/threadPullRequestCompatibility.ts",
       "default": "./src/threadPullRequestCompatibility.ts"
+    },
+    "./fork/brand": {
+      "types": "./src/fork/brand.ts",
+      "default": "./src/fork/brand.ts"
     }
   },
   "scripts": {

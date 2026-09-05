@@ -40,7 +40,10 @@ export function selectPrismEnvironments(
   ) => Pick<ExecutionEnvironmentCapabilities, "forkFlags"> | null | undefined,
 ): ReadonlyArray<PrismEnvironmentRef> {
   return environments
-    .filter((environment) => readForkFlag(capabilitiesOf(environment.environmentId), "prism"))
+    .filter((environment) => {
+      const capabilities = capabilitiesOf(environment.environmentId);
+      return readForkFlag(capabilities, "prism") || readForkFlag(capabilities, "mic-identity");
+    })
     .map((environment) => ({
       environmentId: environment.environmentId,
       label: environment.label,
