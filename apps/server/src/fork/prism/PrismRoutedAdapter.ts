@@ -348,11 +348,13 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
       ) {
         yield* warning(route, "Prism is unavailable. Using local direct-provider credentials.");
       }
+      let startupLifecycle = route.lifecycle;
       const result = yield* selected.startSession(cleanStart(start)).pipe(
         Effect.catch((error) => {
           if (selected === input.direct || !allowDirectFallback || blocksFallback(error))
             return Effect.fail(error);
           route.adapter = input.direct;
+          startupLifecycle = ++route.lifecycle;
           return selected
             .stopSession(start.threadId)
             .pipe(Effect.ignore, Effect.andThen(input.direct.startSession(cleanStart(start))));
@@ -363,7 +365,7 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
           }),
         ),
       );
-      if (sessions.get(start.threadId) === route && route.lifecycle === 0)
+      if (sessions.get(start.threadId) === route && route.lifecycle === startupLifecycle)
         input.onSessionRoute?.(
           start.threadId,
           start.modelSelection,
