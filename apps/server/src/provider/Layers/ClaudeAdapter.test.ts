@@ -3746,6 +3746,69 @@ describe("ClaudeAdapterLive", () => {
       return { runtimeEvents, runtimeEventsFiber, drainSdkMessages };
     });
 
+  it.effect(
+    "retains the failed result and resume cursor after a zero-API-time limit rejection",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const { runtimeEvents, runtimeEventsFiber, drainSdkMessages } =
+          yield* observeUsageLimitEvents(adapter, harness.query);
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({ threadId: THREAD_ID, input: "Continue", attachments: [] });
+        harness.query.emit({
+          type: "rate_limit_event",
+          rate_limit_info: {
+            status: "rejected",
+            rateLimitType: "seven_day_overage_included",
+            resetsAt: 1788825600,
+            overageStatus: "rejected",
+            isUsingOverage: false,
+          },
+          session_id: "sdk-session-limit",
+          uuid: "limit-rejected",
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: true,
+          terminal_reason: "api_error",
+          api_error_status: 429,
+          duration_ms: 500,
+          duration_api_ms: 0,
+          total_cost_usd: 0,
+          num_turns: 1,
+          errors: [],
+          result: "",
+          session_id: "sdk-session-limit",
+          uuid: "result-limit-rejected",
+        } as unknown as SDKMessage);
+        yield* drainSdkMessages;
+        const sessions = yield* adapter.listSessions();
+        assert.equal(sessions.length, 1);
+        assert.equal(sessions[0]?.status, "ready");
+        assert.equal(sessions[0]?.activeTurnId, undefined);
+        assert.equal(sessions[0]?.lastError, "Claude gave up after repeated API errors.");
+        assert.equal(
+          (sessions[0]?.resumeCursor as { resume?: string })?.resume,
+          "sdk-session-limit",
+        );
+        assert.equal(harness.query.closeCalls, 0);
+        assert.equal(runtimeEvents.filter((event) => event.type === "runtime.warning").length, 1);
+        const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+        assert.equal(completed?.type === "turn.completed" && completed.payload.state, "failed");
+        yield* Fiber.interrupt(runtimeEventsFiber);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("surfaces a rejected Claude usage limit once per turn", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
