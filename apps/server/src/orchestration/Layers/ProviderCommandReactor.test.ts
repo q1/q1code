@@ -2866,6 +2866,140 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it.each([
+    {
+      name: "omitted selection",
+      instanceId: "claudeAgent",
+      failed: true,
+      running: false,
+      selection: false,
+      restart: true,
+    },
+    {
+      name: "unchanged selection",
+      instanceId: "claudeAgent",
+      failed: true,
+      running: false,
+      selection: true,
+      restart: true,
+    },
+    {
+      name: "named Claude instance",
+      instanceId: "claude_work",
+      failed: true,
+      running: false,
+      selection: false,
+      restart: true,
+    },
+    {
+      name: "healthy Claude session",
+      instanceId: "claudeAgent",
+      failed: false,
+      running: false,
+      selection: false,
+      restart: false,
+    },
+    {
+      name: "active Claude turn",
+      instanceId: "claudeAgent",
+      failed: true,
+      running: true,
+      selection: false,
+      restart: false,
+    },
+    {
+      name: "another provider",
+      instanceId: "codex",
+      failed: true,
+      running: false,
+      selection: false,
+      restart: false,
+    },
+  ])("restarts only failed idle Claude sessions on retry: $name", async (scenario) => {
+    const instanceId = ProviderInstanceId.make(scenario.instanceId);
+    const modelSelection = createModelSelection(
+      instanceId,
+      scenario.instanceId === "codex" ? "gpt-5-codex" : "claude-fable-5-1",
+      scenario.instanceId === "codex" ? [] : [{ id: "effort", value: "high" }],
+    );
+    const harness = await createHarness({ threadModelSelection: modelSelection });
+    const threadId = ThreadId.make("thread-1");
+    const now = "2026-01-01T00:00:00.000Z";
+    const send = async (id: string, selection?: ModelSelection) => {
+      const sent = await harness.runEffect(Deferred.make<void>());
+      const sendTurn = harness.sendTurn.getMockImplementation()!;
+      harness.sendTurn.mockImplementationOnce((input) =>
+        sendTurn(input).pipe(Effect.tap(() => Deferred.succeed(sent, undefined))),
+      );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-${id}`),
+          threadId,
+          message: {
+            messageId: asMessageId(`message-${id}`),
+            role: "user",
+            text: "Continue",
+            attachments: [],
+          },
+          ...(selection ? { modelSelection: selection } : {}),
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+      await harness.runEffect(Deferred.await(sent));
+      await harness.drain();
+    };
+    await send("initial", modelSelection);
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    const original = harness.runtimeSessions[0]!;
+    const lastError = scenario.failed ? "Claude gave up after repeated API errors." : undefined;
+    harness.runtimeSessions[0] = {
+      ...original,
+      status: scenario.running ? "running" : "ready",
+      ...(scenario.running ? { activeTurnId: asTurnId("active-turn") } : {}),
+      ...(lastError ? { lastError } : {}),
+    };
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-failed-session"),
+        threadId,
+        session: {
+          threadId,
+          providerName: original.provider,
+          providerInstanceId: instanceId,
+          status: scenario.running ? "running" : scenario.failed ? "error" : "ready",
+          runtimeMode: "approval-required",
+          activeTurnId: scenario.running ? asTurnId("active-turn") : null,
+          lastError: lastError ?? null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await harness.drain();
+
+    await send("retry", scenario.selection ? modelSelection : undefined);
+
+    expect(harness.startSession).toHaveBeenCalledTimes(scenario.restart ? 2 : 1);
+    expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+    if (scenario.restart) {
+      expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+        threadId,
+        providerInstanceId: instanceId,
+        modelSelection,
+        resumeCursor: original.resumeCursor,
+        runtimeMode: original.runtimeMode,
+        cwd: original.cwd,
+      });
+      expect(harness.startSession.mock.invocationCallOrder[1]).toBeLessThan(
+        harness.sendTurn.mock.invocationCallOrder[1]!,
+      );
+    }
+  });
+
   it("restarts claude sessions when claude effort changes", async () => {
     const harness = await createHarness({
       threadModelSelection: {

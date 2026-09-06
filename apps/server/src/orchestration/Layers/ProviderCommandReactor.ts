@@ -783,13 +783,23 @@ const make = Effect.gen(function* () {
         preferredProvider === "claudeAgent" &&
         requestedModelSelection !== undefined &&
         !Equal.equals(previousModelSelection, requestedModelSelection);
+      // Claude leaves its CLI alive after a failed result, including terminal
+      // usage-limit errors. Resume the next user turn in a fresh runtime so
+      // process-local failure state cannot keep rejecting an unchanged retry.
+      // Keep the conversation cursor and never interrupt an active turn.
+      const shouldRestartAfterFailure =
+        preferredProvider === "claudeAgent" &&
+        activeSession?.status === "ready" &&
+        activeSession.activeTurnId === undefined &&
+        activeSession.lastError !== undefined;
 
       if (
         !runtimeModeChanged &&
         !cwdChanged &&
         !instanceChanged &&
         !shouldRestartForModelChange &&
-        !shouldRestartForModelSelectionChange
+        !shouldRestartForModelSelectionChange &&
+        !shouldRestartAfterFailure
       ) {
         yield* refreshWorkspaceSnapshot;
         return existingSessionThreadId;
@@ -815,6 +825,7 @@ const make = Effect.gen(function* () {
         instanceChanged,
         shouldRestartForModelChange,
         shouldRestartForModelSelectionChange,
+        shouldRestartAfterFailure,
         hasResumeCursor: resumeCursor !== undefined,
       });
       const restartedSession = yield* startProviderSession(

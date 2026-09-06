@@ -4110,7 +4110,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
         var changedIDs = Set(mutations.messages.map(\.id))
         for activity in mutations.activities {
-            if activity.tone == "error" {
+            if Self.activityNoticeText(activity) != nil {
                 changedIDs.insert("activity-\(activity.id)")
             } else if NativeWorkLogAccumulator.accepts(activity) {
                 changedIDs.insert("work-log-\(activity.turnId ?? "unscoped")")
@@ -4527,10 +4527,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             }
             cache.approvals = pendingApprovals(thread, environment: environment)
             cache.userInputs = pendingUserInputs(thread, environment: environment)
-            let errors = thread.activities.compactMap(mapErrorActivity)
+            let notices = thread.activities.compactMap(mapNoticeActivity)
             let sessionIsLive = thread.session?.status == "starting"
                 || thread.session?.status == "running"
-            let activityMessages = (errors + collapsedWorkLogs(
+            let activityMessages = (notices + collapsedWorkLogs(
                 thread.activities,
                 sessionIsLive: sessionIsLive
             ))
@@ -4743,7 +4743,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let workIsLive = thread.session?.status == "starting"
             || thread.session?.status == "running"
             || backgroundLiveness(threadID: thread.id, environmentID: environmentID) == .working
-        let activities = thread.activities.compactMap(mapErrorActivity)
+        let activities = thread.activities.compactMap(mapNoticeActivity)
             + collapsedWorkLogs(thread.activities, sessionIsLive: workIsLive)
         return (messages + activities).sorted { $0.createdAt < $1.createdAt }
     }
@@ -4838,8 +4838,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             environment: environment,
             cache: cache
         )
-        if let error = mapErrorActivity(activity) {
-            upsertMergedMessage(error, cache: cache)
+        if let notice = mapNoticeActivity(activity) {
+            upsertMergedMessage(notice, cache: cache)
         }
         guard NativeWorkLogAccumulator.accepts(activity),
               cache.workLogActivityIDs.insert(activity.id).inserted else {
@@ -5012,10 +5012,22 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
     }
 
-    private func mapErrorActivity(_ activity: OrchestrationActivity) -> FeatureMessage? {
-        guard activity.tone == "error" else { return nil }
-        let detail = activity.payload["detail"]?.stringValue
-        let text = detail.map { "\(activity.summary)\n\($0)" } ?? activity.summary
+    static func activityNoticeText(_ activity: OrchestrationActivity) -> String? {
+        guard activity.tone == "error" || activity.kind == "runtime.warning" else { return nil }
+        if let message = activity.payload["message"]?.stringValue,
+           !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return message
+        }
+        if let detail = activity.payload["detail"]?.stringValue,
+           !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           detail != activity.summary {
+            return "\(activity.summary)\n\(detail)"
+        }
+        return activity.summary
+    }
+
+    private func mapNoticeActivity(_ activity: OrchestrationActivity) -> FeatureMessage? {
+        guard let text = Self.activityNoticeText(activity) else { return nil }
         return FeatureMessage(
             id: "activity-\(activity.id)",
             role: .system,
