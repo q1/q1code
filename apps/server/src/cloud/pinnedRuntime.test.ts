@@ -85,7 +85,12 @@ it.layer(Layer.merge(NodeServices.layer, releaseDownloaderTestLayer("1.2.3")))(
           commands.map((command) => command.command),
           ["npm", "pnpm"],
         );
-        assert.deepEqual(commands[1]!.args, ["--package=npm@11", "dlx", "npm", ...commands[0]!.args]);
+        assert.deepEqual(commands[1]!.args, [
+          "--package=npm@11",
+          "dlx",
+          "npm",
+          ...commands[0]!.args,
+        ]);
         assert.equal(yield* fs.readFileString(paths.sentinelPath), "1.2.3\n");
       }),
     );

@@ -3,7 +3,7 @@ import SwiftUI
 public struct PrismView: View {
     private let client: any FeatureClient
     private let environments: [FeatureEnvironment]
-    @Environment(\.scenePhase) private var scenePhase
+    @SwiftUI.Environment(\.scenePhase) private var scenePhase
     @State private var environmentID = ""
     @State private var status: PrismResponse?
     @State private var accounts: [PrismAccount] = []
