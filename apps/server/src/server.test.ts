@@ -499,6 +499,7 @@ const makeBrowserOtlpPayload = (spanName: string) =>
   });
 
 const buildAppUnderTest = (options?: {
+  forkFlags?: { readonly prism: boolean; readonly "mic-identity": boolean };
   onPairingChangesSubscribed?: Effect.Effect<void>;
   config?: Partial<ServerConfig.ServerConfig["Service"]>;
   layers?: {
@@ -586,6 +587,13 @@ const buildAppUnderTest = (options?: {
       tailscaleServePort: 443,
       ...options?.config,
     };
+    if (options?.forkFlags) {
+      yield* fileSystem.makeDirectory(config.stateDir, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${config.stateDir}/fork.json`,
+        jsonRequestBody({ flags: options.forkFlags }),
+      );
+    }
     const layerConfig = ServerConfig.layer(config);
     const defaultVcsDriver: VcsDriver.VcsDriver["Service"] = {
       capabilities: {
@@ -1614,11 +1622,9 @@ const assertBrowserApiCorsPreflightHeaders = (
 ) => {
   assertBrowserApiCorsResponseHeaders(headers, options);
   assert.deepEqual(splitHeaderTokens(headers["access-control-allow-methods"] ?? null), [
-    "DELETE",
     "GET",
     "OPTIONS",
     "POST",
-    "PUT",
   ]);
   assert.deepEqual(splitHeaderTokens(headers["access-control-allow-headers"]), [
     "authorization",
@@ -1626,8 +1632,6 @@ const assertBrowserApiCorsPreflightHeaders = (
     "content-type",
     "dpop",
     "traceparent",
-    "x-mic-sc-prism-credential",
-    "x-mic-sc-session",
   ]);
 };
 const crossOriginClientOrigin = "http://remote-client.test:3773";
@@ -5210,7 +5214,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("allows remote Prism connect and disconnect browser preflights", () =>
     Effect.gen(function* () {
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({ forkFlags: { prism: true, "mic-identity": true } });
       for (const method of ["PUT", "DELETE"]) {
         const response = yield* HttpClient.options("/api/fork/prism/identity/threads/test", {
           headers: {
@@ -5220,10 +5224,88 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           },
         });
         assert.equal(response.status, 204);
+        assertBrowserApiCorsResponseHeaders(response.headers);
+        assert.deepEqual(splitHeaderTokens(response.headers["access-control-allow-methods"]), [
+          "DELETE",
+          "GET",
+          "OPTIONS",
+          "POST",
+          "PUT",
+        ]);
+        assert.deepEqual(splitHeaderTokens(response.headers["access-control-allow-headers"]), [
+          "authorization",
+          "b3",
+          "content-type",
+          "dpop",
+          "traceparent",
+          "x-mic-sc-prism-credential",
+          "x-mic-sc-session",
+        ]);
+      }
+      for (const path of [
+        "/api/observability/v1/traces",
+        "/api/fork/prism/unknown",
+        "/api/fork/prism/identity/threads/test/extra",
+      ]) {
+        const response = yield* HttpClient.options(path, {
+          headers: { origin: crossOriginClientOrigin, "access-control-request-method": "DELETE" },
+        });
+        assert.equal(response.status, 204);
         assertBrowserApiCorsPreflightHeaders(response.headers);
       }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
+
+  it.effect("preserves configured origin restrictions for enabled Prism preflights", () =>
+    Effect.gen(function* () {
+      const devUrl = new URL("http://localhost:5733");
+      yield* buildAppUnderTest({
+        forkFlags: { prism: true, "mic-identity": true },
+        config: { devUrl },
+      });
+      for (const origin of [devUrl.origin, crossOriginClientOrigin]) {
+        const response = yield* HttpClient.options("/api/fork/prism/identity/threads/test", {
+          headers: { origin, "access-control-request-method": "DELETE" },
+        });
+        assert.equal(response.status, 204);
+        assert.equal(
+          response.headers["access-control-allow-origin"],
+          origin === devUrl.origin ? origin : undefined,
+        );
+        assert.equal(response.headers["access-control-allow-credentials"], "true");
+        assert.ok(
+          splitHeaderTokens(response.headers["access-control-allow-methods"]).includes("DELETE"),
+        );
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  for (const identityEnabled of [false, true]) {
+    it.effect(
+      `preserves upstream Prism preflights with prism disabled and identity ${identityEnabled}`,
+      () =>
+        Effect.gen(function* () {
+          yield* buildAppUnderTest({
+            forkFlags: { prism: false, "mic-identity": identityEnabled },
+          });
+          for (const path of [
+            "/api/fork/prism/identity/threads/test",
+            "/api/fork/prism/routing",
+            "/api/fork/prism/accounts/test",
+          ]) {
+            const response = yield* HttpClient.options(path, {
+              headers: {
+                origin: crossOriginClientOrigin,
+                "access-control-request-method": "PUT",
+                "access-control-request-headers": "authorization,x-mic-sc-prism-credential",
+              },
+            });
+            assert.equal(response.status, 204);
+            assertBrowserApiCorsPreflightHeaders(response.headers);
+          }
+        }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
 
   it.effect("responds to browser OTLP trace preflight requests with CORS headers", () =>
     Effect.gen(function* () {
@@ -5240,11 +5322,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.status, 204);
       assert.equal(response.headers["access-control-allow-origin"], "*");
       assert.deepEqual(splitHeaderTokens(response.headers["access-control-allow-methods"]), [
-        "DELETE",
         "GET",
         "OPTIONS",
         "POST",
-        "PUT",
       ]);
       assert.deepEqual(splitHeaderTokens(response.headers["access-control-allow-headers"]), [
         "authorization",
@@ -5252,8 +5332,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "content-type",
         "dpop",
         "traceparent",
-        "x-mic-sc-prism-credential",
-        "x-mic-sc-session",
       ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

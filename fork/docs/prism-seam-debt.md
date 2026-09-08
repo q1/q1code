@@ -1,8 +1,9 @@
 # Prism integration seams and remaining debt
 
 The September 8 refactor preserves the completed identity/Prism behavior while
-moving implementation back into fork-owned modules. It does not raise the
-40-file seam budget, change release versions, or authorize promotion.
+moving implementation back into fork-owned modules. It does not widen feature
+scope, change release versions, or authorize promotion. The current seam budget
+is defined in FORK.md.
 
 - ChatComposer uses the typed `ForkSlot` named `chat-model-picker`. Its context
   supplies the owning environment and route options; existing picker props pass
@@ -16,6 +17,10 @@ moving implementation back into fork-owned modules. It does not raise the
 - The web development proxy wraps upstream's proxy map with one fork helper.
   Ordinary and websocket entries keep their original options; the identity
   route retains the actual browser origin.
+- CORS uses a fork-owned factory at the existing global registration. It selects
+  extensions only for registered Prism routes with the relevant flags enabled;
+  all other requests retain upstream CORS, including origin and credential policy.
+  Real-server preflight coverage verifies remote connect/disconnect and baseline parity.
 - Settings search contributes its base entry from a fork-owned collection.
   Unrelated settings whitespace is restored.
 - Release-installation tests retain upstream suite layout. The three additional
@@ -30,7 +35,6 @@ Temporary larger hooks remain and carry `Fork-Seam-Debt: yes`:
 | Mobile NewTaskDraftScreen | Status element uses current draft context. Upstream candidate additionally routes immediate and queued selection resolution through the fork policy. Retain separate submission validation until upstream exposes that boundary. |
 | ChatComposer slot opening | Named slot replaces the existing picker; typed environment/route context is essential to permission-aware eligibility. Its formatted opening may exceed three physical lines, but no eligibility logic lives in the composer. |
 | Pinned runtime installation | Verified release staging needs error mapping and branded entry paths. Test fixtures retain minimal brand/runtime hooks. Replace with upstream pluggable release resolution and fixture support when available. |
-| CORS methods/headers | Existing global preflight metadata includes scoped credential headers and PUT/DELETE regardless of flags. This is retained observable parity debt, not new authorization. Route-scoped middleware could remove it only after real-server ordering/preflight coverage proves equivalent behavior. |
 | Settings path/label/icon registries and generated route table | Static typed registrations are inert until rendered through existing flag-aware navigation/search. Collapse into an upstream extension registry when one exists; do not weaken exhaustive path typing. |
 
 File count and generated marker checks do not establish the three-line rule or
