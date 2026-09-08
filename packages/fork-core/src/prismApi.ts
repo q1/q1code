@@ -365,6 +365,7 @@ const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
   dpop: Schema.optionalKey(Schema.String),
   "x-mic-sc-session": Schema.optionalKey(Schema.String),
+  "x-mic-sc-prism-credential": Schema.optionalKey(Schema.String),
 });
 
 const SessionParams = Schema.Struct({ sessionId: Schema.String });
@@ -377,6 +378,8 @@ const ScopeErrors = [
   MicIdentityUnavailableError,
 ] as const;
 export const MicPrismThreadReceipt = Schema.Struct({
+  serviceInstanceId: Schema.optionalKey(Schema.String),
+  pairingRevision: Schema.optionalKey(Schema.Int),
   threadId: Schema.String,
   expiresAt: Schema.Int,
 });

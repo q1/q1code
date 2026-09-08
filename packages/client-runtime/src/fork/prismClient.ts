@@ -59,6 +59,9 @@ import {
   type MicIdentityClientError,
 } from "@q1code/core/micIdentity";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+import { mintMicPrismCredential } from "./micPrismInference.ts";
+import type { MicIdentityClientInput } from "./micIdentityClient.ts";
 import * as Clock from "effect/Clock";
 import * as Option from "effect/Option";
 import { FetchHttpClient, Headers, type HttpClient, type HttpMethod } from "effect/unstable/http";
@@ -69,7 +72,11 @@ import type { PreparedConnection } from "../connection/model.ts";
 import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
-import { resolveMicIdentityToken, type MicIdentityTokenSource } from "./micIdentityClient.ts";
+import {
+  requireCurrentMicIdentity,
+  resolveMicIdentityToken,
+  type MicIdentityTokenSource,
+} from "./micIdentityClient.ts";
 
 export type {
   PrismAccount,
@@ -92,6 +99,8 @@ export interface PrismClientInput {
   readonly timeoutMs?: number;
   /** Additional human authorization; environment bearer/DPoP/cookies remain required. */
   readonly micScToken?: MicIdentityTokenSource;
+  readonly micIdentity?: MicIdentityClientInput;
+  readonly prismCredential?: string;
 }
 
 type DeclaredError =
@@ -146,6 +155,7 @@ const call = <A, E, R>(
       readonly authorization?: string;
       readonly dpop?: string;
       readonly "x-mic-sc-session"?: string;
+      readonly "x-mic-sc-prism-credential"?: string;
     },
   ) => Effect.Effect<A, E, R>,
   params?: Record<string, string>,
@@ -176,6 +186,7 @@ const call = <A, E, R>(
       },
       request: ({ headers }) =>
         Effect.gen(function* () {
+          if (input.micIdentity) yield* requireCurrentMicIdentity(input.micIdentity);
           const micToken =
             input.micScToken === undefined
               ? undefined
@@ -183,15 +194,17 @@ const call = <A, E, R>(
           const client = yield* HttpApiClient.make(PrismHttpApi, { baseUrl: currentBaseUrl });
           const operation = request(
             client,
-            micToken === undefined
-              ? headers
-              : { ...headers, [MIC_IDENTITY_SESSION_HEADER]: micToken },
+            input.prismCredential !== undefined
+              ? { ...headers, "x-mic-sc-prism-credential": input.prismCredential }
+              : micToken === undefined
+                ? headers
+                : { ...headers, [MIC_IDENTITY_SESSION_HEADER]: micToken },
           );
           const requestInit = Option.getOrElse(
             yield* Effect.serviceOption(FetchHttpClient.RequestInit),
             () => ({}),
           );
-          return yield* micToken === undefined
+          return yield* micToken === undefined && input.prismCredential === undefined
             ? operation
             : operation.pipe(
                 Effect.provideService(FetchHttpClient.RequestInit, {
@@ -212,11 +225,12 @@ const call = <A, E, R>(
       Effect.provideService(Headers.CurrentRedactedNames, [
         ...redactedHeaders,
         MIC_IDENTITY_SESSION_HEADER,
+        "x-mic-sc-prism-credential",
       ]),
       // Effect transport errors retain request headers. Do not put a human
       // session token into a UI error, log, or serialized failure cause.
       Effect.mapError((error) =>
-        input.micScToken === undefined
+        input.micScToken === undefined && input.prismCredential === undefined
           ? error
           : new MicIdentityUnavailableError({ reason: "transport" }),
       ),
@@ -249,17 +263,29 @@ export const getPrismIdentityAccess = (
 
 export const connectMicPrismThread = (input: PrismClientInput & { readonly threadId: string }) =>
   Effect.gen(function* () {
+    const token = input.micScToken ? yield* resolveMicIdentityToken(input.micScToken) : undefined;
+    const delegated = token?.startsWith("q1br_")
+      ? input.micIdentity
+        ? yield* mintMicPrismCredential(input.micIdentity)
+        : yield* new MicIdentityUnavailableError({ reason: "configuration" })
+      : undefined;
+    const { micScToken: _token, ...environmentInput } = input;
     const receipt = yield* call(
-      input,
+      delegated ? { ...environmentInput, prismCredential: Redacted.value(delegated.token) } : input,
       "PUT",
       "connectIdentityThread",
       (client, headers) =>
         client.prism.connectIdentityThread({ headers, params: { threadId: input.threadId } }),
       { threadId: input.threadId },
     );
+    if (input.micIdentity) yield* requireCurrentMicIdentity(input.micIdentity);
     const now = yield* Clock.currentTimeMillis;
     if (
       receipt.threadId !== input.threadId ||
+      (delegated !== undefined &&
+        (receipt.serviceInstanceId !== delegated.service.id ||
+          receipt.pairingRevision !== delegated.service.pairingRevision ||
+          receipt.expiresAt > delegated.expiresAt)) ||
       receipt.expiresAt <= now ||
       receipt.expiresAt > now + 930_000
     )

@@ -1,6 +1,7 @@
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import {
   MIC_IDENTITY_SESSION_HEADER,
+  MicIdentityServiceUrl,
   MicIdentityForbiddenError,
   MicIdentityUnauthorizedError,
   MicIdentityUnavailableError,
@@ -32,12 +33,18 @@ export const connectMicPrismThreadRequest = Effect.fn("connectMicPrismThreadRequ
     const activeFlags = yield* flags.current;
     if (!activeFlags["mic-identity"] || !activeFlags.prism)
       return yield* new MicIdentityUnavailableError({ reason: "configuration" });
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const delegatedToken = request.headers["x-mic-sc-prism-credential"];
+    if (delegatedToken !== undefined) {
+      if (request.headers[MIC_IDENTITY_SESSION_HEADER])
+        return yield* new MicIdentityUnauthorizedError({ reason: "invalid-session" });
+      return yield* connectDelegatedThread(threadId, principal.sessionId, delegatedToken);
+    }
     const access = yield* requireMicIdentity("prism:inference");
     if (!access?.session.sessionId || !access.discovery.service)
       return yield* new MicIdentityUnauthorizedError({ reason: "invalid-session" });
     const service = access.discovery.service;
     const config = (yield* flags.config)["mic-identity"]!;
-    const request = yield* HttpServerRequest.HttpServerRequest;
     const fetchAuthority = yield* MicIdentityFetch;
     const body = yield* encodeCredentialRequest({
       serviceInstanceId: service.id,
@@ -132,3 +139,135 @@ export const disconnectMicPrismThreadRequest = Effect.fn("disconnectMicPrismThre
     return { threadId, expiresAt: 0 };
   },
 );
+
+const DelegatedClaims = Schema.Struct({
+  v: Schema.Literal(1),
+  audience: Schema.Literal("mic.sc/prism"),
+  kind: Schema.Literal("inference"),
+  capability: Schema.Literal("prism:inference"),
+  subject: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(256)),
+  sessionId: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(256)),
+  serviceInstanceId: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(256)),
+  pairingRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+  expiresAt: Schema.Int,
+});
+const DelegatedDecision = Schema.Struct({
+  authorized: Schema.Literal(true),
+  subject: Schema.String,
+  sessionId: Schema.String,
+  serviceInstanceId: Schema.String,
+  pairingRevision: Schema.Int,
+  capabilities: Schema.Array(Schema.String),
+  inferenceUrl: MicIdentityServiceUrl,
+  authorizationIssuedAt: Schema.Int,
+  authorizationExpiresAt: Schema.Int,
+});
+
+/** Decode routing hints only; the configured authority must authenticate this exact credential. */
+const connectDelegatedThread = Effect.fn("connectDelegatedMicPrismThread")(function* (
+  threadId: string,
+  environmentSessionId: string,
+  token: string,
+) {
+  const reject = () => new MicIdentityUnauthorizedError({ reason: "invalid-session" });
+  if (token.length > 8192 || !/^msp1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token))
+    return yield* reject();
+  const claims = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(DelegatedClaims))(
+    Buffer.from(token.split(".")[1]!, "base64url").toString("utf8"),
+  ).pipe(Effect.mapError(reject));
+  const now = DateTime.toEpochMillis(yield* DateTime.now);
+  if (claims.expiresAt <= now || claims.expiresAt > now + 930_000) return yield* reject();
+  const flags = yield* ForkFlagsService;
+  const config = (yield* flags.config)["mic-identity"];
+  if (!config || !Schema.is(MicIdentityServiceUrl)(config.authorityUrl))
+    return yield* new MicIdentityUnavailableError({ reason: "configuration" });
+  const authorityFetch = yield* MicIdentityFetch;
+  const body = yield* Schema.encodeEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        serviceInstanceId: Schema.String,
+        pairingRevision: Schema.Int,
+        capability: Schema.Literal("prism:inference"),
+      }),
+    ),
+  )({
+    serviceInstanceId: claims.serviceInstanceId,
+    pairingRevision: claims.pairingRevision,
+    capability: "prism:inference",
+  }).pipe(Effect.mapError(reject));
+  const response = yield* Effect.tryPromise({
+    try: (signal) =>
+      authorityFetch(`${config.authorityUrl.replace(/\/$/, "")}/v1/prism/authorize`, {
+        method: "POST",
+        redirect: "error",
+        cache: "no-store",
+        signal,
+        headers: { "x-prism-credential": token, "content-type": "application/json" },
+        body,
+      }),
+    catch: () => new MicIdentityUnavailableError({ reason: "transport" }),
+  });
+  if (response.status === 401 || response.status === 403) return yield* reject();
+  if (!response.ok) return yield* new MicIdentityUnavailableError({ reason: "transport" });
+  const decisionRaw = yield* Effect.tryPromise({
+    try: () => response.json() as Promise<unknown>,
+    catch: reject,
+  });
+  const decision = yield* Schema.decodeUnknownEffect(DelegatedDecision)(decisionRaw).pipe(
+    Effect.mapError(reject),
+  );
+  const completedAt = DateTime.toEpochMillis(yield* DateTime.now);
+  if (
+    decision.subject !== claims.subject ||
+    decision.sessionId !== claims.sessionId ||
+    decision.serviceInstanceId !== claims.serviceInstanceId ||
+    decision.pairingRevision !== claims.pairingRevision ||
+    !decision.capabilities.includes("prism:inference") ||
+    decision.authorizationIssuedAt < now - 30_000 ||
+    decision.authorizationIssuedAt > completedAt + 30_000 ||
+    decision.authorizationExpiresAt <= completedAt ||
+    decision.authorizationExpiresAt > decision.authorizationIssuedAt + 60_000 ||
+    claims.expiresAt <= completedAt
+  )
+    return yield* reject();
+  const optionalSessions = yield* Effect.serviceOption(SessionStore);
+  if (Option.isNone(optionalSessions))
+    return yield* new MicIdentityUnavailableError({ reason: "configuration" });
+  const sessions = optionalSessions.value;
+  const binding = {
+    environmentSessionId,
+    threadId,
+    subject: decision.subject,
+    sessionId: decision.sessionId,
+    serviceInstanceId: decision.serviceInstanceId,
+    pairingRevision: decision.pairingRevision,
+    inferenceOrigin: decision.inferenceUrl,
+  };
+  const receipt = yield* Effect.tryPromise({
+    try: (signal) =>
+      registerMicPrismThread({
+        binding,
+        credential: { binding, token, expiresAt: claims.expiresAt },
+        signal,
+        verifyEnvironment: () =>
+          Effect.runPromise(
+            sessions.listActive().pipe(
+              Effect.map((all) =>
+                all.some(
+                  (session) =>
+                    session.sessionId === environmentSessionId &&
+                    session.scopes.includes(AuthOrchestrationOperateScope),
+                ),
+              ),
+              Effect.orElseSucceed(() => false),
+            ),
+          ),
+      }),
+    catch: () => new MicIdentityForbiddenError({ capability: "prism:inference" }),
+  });
+  return {
+    ...receipt,
+    serviceInstanceId: binding.serviceInstanceId,
+    pairingRevision: binding.pairingRevision,
+  };
+});
