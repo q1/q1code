@@ -1,3 +1,4 @@
+import { browserIdentityFetch } from "../fork/mic-identity/browserIdentityRelay";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -16,7 +17,7 @@ function configuredRelayUrl(): string {
   return resolveCloudPublicConfig().relayUrl ?? "http://relay.invalid";
 }
 
-const httpClientLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
+const httpClientLayer = remoteHttpClientLayer(browserIdentityFetch);
 const relayTracingLayer = makeRelayClientTracingLayer(resolveRelayTracingConfig(), {
   serviceName: "t3-web-relay-client",
   serviceVersion: import.meta.env.APP_VERSION,

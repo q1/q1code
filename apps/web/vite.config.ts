@@ -234,16 +234,20 @@ export default defineConfig(() => {
             // Vite's HMR socket is matched separately and exactly (path "/"
             // plus a vite-hmr subprotocol), so the upgrade handlers don't
             // collide.
-            proxy: Object.fromEntries(
-              DEV_PROXIED_PATH_PREFIXES.map((prefix) => [
-                prefix,
-                {
-                  target: devProxyTarget,
-                  changeOrigin: true,
-                  ...(prefix === "/ws" || prefix === "/api" ? { ws: true } : {}),
-                },
-              ]),
-            ),
+            proxy: {
+              // fork: mic-identity — preserve the browser origin for relay cookie binding.
+              "/api/fork/prism/identity/browser": { target: devProxyTarget, changeOrigin: false },
+              ...Object.fromEntries(
+                DEV_PROXIED_PATH_PREFIXES.map((prefix) => [
+                  prefix,
+                  {
+                    target: devProxyTarget,
+                    changeOrigin: true,
+                    ...(prefix === "/ws" || prefix === "/api" ? { ws: true } : {}),
+                  },
+                ]),
+              ),
+            },
           }
         : {}),
       // Electron's BrowserWindow needs the HMR socket pinned to an explicit
