@@ -36,6 +36,7 @@ import {
 import { MicPrismPairingSection } from "./MicPrismPairingSection";
 import { MicPrismThreadSection } from "./MicPrismThreadSection";
 import { MicPrismInferenceSection } from "./MicPrismInferenceSection";
+import { MicPrismManagementSection } from "./MicPrismManagementSection";
 import { MicPrismTokenContext } from "./micIdentityContext";
 import { describePrismError, PRISM_ROUTING_OPTIONS } from "./prismSettings.logic";
 import { type PrismApi, usePrismApi } from "./usePrismApi";
@@ -320,7 +321,7 @@ function MicService(props: {
         }
         setGateway(status.success);
       }
-      if (result.success.session.permissions.includes("prism:routing:read")) {
+      if (result.success.session.permissions.includes("prism:routing:read") && !result.success.session.permissions.includes("prism:settings:read")) {
         const routing = await runtime.runPromise(getMicPrismRouting(bound).pipe(Effect.result));
         if (!current()) return;
         if (routing._tag === "Success") setStrategy(routing.success.strategy);
@@ -419,7 +420,7 @@ function MicService(props: {
             disabled={busy || refreshing}
             onPress={() => void refresh()}
           />
-          {access?.session.permissions.includes("prism:routing:read") ? (
+          {access?.session.permissions.includes("prism:routing:read") && !access.session.permissions.includes("prism:settings:read") ? (
             <View className="flex-row flex-wrap gap-2">
               {PRISM_ROUTING_OPTIONS.map((option) => (
                 <IdentityButton
@@ -441,6 +442,15 @@ function MicService(props: {
       />
       {access ? (
         <MicPrismPairingSection input={input} access={access} onChanged={() => void refresh()} />
+      ) : null}
+      {access?.discovery.service ? (
+        <MicPrismManagementSection
+          key={`${serviceId}:${servicePairingRevision}:${serviceApiUrl}:${serviceInferenceUrl}`}
+          input={{ ...input, expectedService: access.discovery.service }}
+          permissions={access.session.permissions}
+          enabled={error === null}
+          hostName={access.discovery.service.label}
+        />
       ) : null}
       {access?.session.permissions.includes("prism:inference") && gateway ? (
         <MicPrismInferenceSection

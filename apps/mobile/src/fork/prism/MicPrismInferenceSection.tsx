@@ -1,4 +1,5 @@
-import { completeMicPrismChat, listMicPrismModels } from "@t3tools/client-runtime/fork";
+import { completeMicPrismChat, getMicPrismAvailability, describeMicPrismAvailability, describeMicPrismWarning } from "@t3tools/client-runtime/fork";
+import type { MicPrismModelAvailability } from "@q1code/core/micPrismApi";
 import type { MicIdentityClientInput } from "@t3tools/client-runtime/fork";
 import * as Effect from "effect/Effect";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -13,7 +14,8 @@ export function MicPrismInferenceSection(props: {
   readonly input: MicIdentityClientInput;
   readonly enabled: boolean;
 }) {
-  const [models, setModels] = useState<ReadonlyArray<string>>([]);
+  const [models, setModels] = useState<ReadonlyArray<MicPrismModelAvailability>>([]);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [model, setModel] = useState("");
   const [prompt, setPrompt] = useState("");
   const [response, setResponse] = useState("");
@@ -36,7 +38,7 @@ export function MicPrismInferenceSection(props: {
     const abort = new AbortController();
     catalogRequest.current = abort;
     void runtime
-      .runPromise(listMicPrismModels(props.input).pipe(Effect.result), { signal: abort.signal })
+      .runPromise(getMicPrismAvailability(props.input).pipe(Effect.result), { signal: abort.signal })
       .then((result) => {
         if (
           abort.signal.aborted ||
@@ -45,19 +47,15 @@ export function MicPrismInferenceSection(props: {
         )
           return;
         if (result._tag === "Success") {
-          setModels(result.success);
-          setError(null);
-          setModel((previous) =>
-            result.success.includes(previous) ? previous : (result.success[0] ?? ""),
-          );
+          setModels(result.success.models);
+          setAvailabilityError(null);
+          setModel((previous) => previous || result.success.models.find((entry) => entry.available)?.id || result.success.models[0]?.id || "");
         } else {
-          setModels([]);
-          setModel("");
-          setError("Could not load Prism models. Refresh access and try again.");
+          setAvailabilityError("Could not check model availability. Refresh access and try again.");
         }
       })
       .catch(() => {
-        if (!abort.signal.aborted) setError("Could not load Prism models. Try again.");
+        if (!abort.signal.aborted) setAvailabilityError("Could not check model availability. Try again.");
       });
     return abort;
   }, [props.input]);
@@ -69,8 +67,11 @@ export function MicPrismInferenceSection(props: {
     };
   }, [loadModels]);
 
+  const selected = models.find((entry) => entry.id === model);
+  const canSend = selected?.available === true && availabilityError === null;
+
   const send = async () => {
-    if (!props.enabled || request.current || !model || !prompt.trim()) return;
+    if (!props.enabled || request.current || !canSend || !prompt.trim()) return;
     const input = props.input;
     const abort = new AbortController();
     request.current = abort;
@@ -117,9 +118,9 @@ export function MicPrismInferenceSection(props: {
     <SettingsSection title="Try a model">
       <View className="gap-3 p-4">
         <Text className="text-sm text-foreground-muted">
-          Send a prompt through your paired Prism service. Listed models may be unavailable when
-          provider capacity changes.
+          {availabilityError ?? (selected ? describeMicPrismAvailability(selected) : "Choose a configured model. Prism verifies eligibility on every request.")}
         </Text>
+        {selected?.warnings.map((warning) => <Text key={warning} className="text-xs text-foreground-muted">{describeMicPrismWarning(warning)}</Text>)}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Choose Prism model"
@@ -151,8 +152,8 @@ export function MicPrismInferenceSection(props: {
         />
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: !busy && (!props.enabled || !model || !prompt.trim()) }}
-          disabled={!busy && (!props.enabled || !model || !prompt.trim())}
+          accessibilityState={{ disabled: !busy && (!props.enabled || !canSend || !prompt.trim()) }}
+          disabled={!busy && (!props.enabled || !canSend || !prompt.trim())}
           onPress={() => {
             if (busy) {
               request.current?.abort();
@@ -199,20 +200,21 @@ export function MicPrismInferenceSection(props: {
           >
             <Text className="text-foreground">Done</Text>
           </Pressable>
-          {models.map((name) => (
+          {models.map((entry) => (
             <Pressable
-              key={name}
+              key={entry.id}
               accessibilityRole="radio"
-              accessibilityState={{ selected: name === model }}
+              accessibilityState={{ selected: entry.id === model, disabled: !entry.available }}
+              disabled={!entry.available}
               onPress={() => {
-                setModel(name);
+                setModel(entry.id);
                 setModelPickerOpen(false);
               }}
               className="rounded-xl bg-subtle p-4"
             >
               <Text className="text-foreground">
-                {name === model ? "✓ " : ""}
-                {name}
+                {entry.id === model ? "✓ " : ""}
+                {entry.id}{entry.available ? "" : " — unavailable"}
               </Text>
             </Pressable>
           ))}

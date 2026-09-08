@@ -112,14 +112,15 @@ final class MicPrismClientTests: XCTestCase {
         XCTAssertFalse(requests.contains { $0.url?.path == "/v1/prism/credentials" })
     }
 
-    func testUnsupportedAccountManagementNeverSendsRequest() async throws {
+    func testAccountManagementRequiresExactGrantBeforeGatewayRequest() async throws {
         let transport = MicPrismFixtureTransport(routingAllowed: true)
         do {
             _ = try await MicPrismClient(transport: transport).call(PrismRequest("/accounts"), configuration: configuration, token: { "fixture-session" }, isCurrent: { true })
-            XCTFail("Expected unsupported operation")
-        } catch MicPrismError.unsupported { }
+            XCTFail("Expected account permission denial")
+        } catch MicPrismError.denied { }
         let requests = await transport.requests
-        XCTAssertTrue(requests.isEmpty)
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests.first?.url?.path, "/v1/identity")
     }
 }
 

@@ -1,12 +1,14 @@
 import Foundation
 
 public enum MicPrismError: LocalizedError, Sendable {
-    case signedOut, denied, unavailable, invalidResponse, unpaired, unsupported, pairingConflict, invalidPairing
+    case signedOut, denied, unavailable, invalidResponse, unpaired, unsupported, pairingConflict, invalidPairing, settingsConflict, unconfirmed
 
     public var errorDescription: String? {
         switch self {
         case .pairingConflict: "The host or pairing changed. Refresh access and start again."
         case .invalidPairing: "Check the host origin, public key and pairing proof."
+        case .settingsConflict: "Prism changed since this view loaded. Refresh and review the current values before trying again."
+        case .unconfirmed: "Prism did not confirm this change. Refresh to check its current state before trying again."
         case .signedOut: "Sign in with mic.sc to continue."
         case .denied: "Your mic.sc account no longer has access to this Prism operation."
         case .unavailable: "Prism could not verify access. Try again when the service is available."
@@ -39,7 +41,9 @@ public struct MicPrismClient: Sendable {
         case ("POST", "/identity/pairings/start"), ("POST", "/identity/pairings/complete"),
              ("POST", "/identity/instances/select"), ("POST", "/identity/instances/revoke"):
             permission = "prism:instances:manage"
-        default: throw MicPrismError.unsupported
+        default:
+            guard let managementPermission = Self.managementPermission(input) else { throw MicPrismError.unsupported }
+            permission = managementPermission
         }
         guard configuration.enabled, let origin = configuration.authorityUrl else {
             throw MicPrismError.unavailable
@@ -88,6 +92,12 @@ public struct MicPrismClient: Sendable {
             return result
         }
         guard let service = discovery.service else { throw MicPrismError.unpaired }
+        if Self.managementPermission(input) != nil {
+            let result = try await management(input, origin: service.apiOrigin, serviceInstanceId: service.serviceInstanceId,
+                pairingRevision: service.pairingRevision, token: token, isCurrent: isCurrent)
+            try identity.require(permission)
+            return result
+        }
         if input.path == "/status" {
             let status: Status = try await request(service.apiOrigin, "/prism/v1/status", token: token, isCurrent: isCurrent)
             guard status.serviceInstanceId == service.serviceInstanceId,
@@ -128,12 +138,12 @@ public struct MicPrismClient: Sendable {
         }
         if input.method == "PUT" {
             guard let strategy = input.body?["strategy"]?.stringValue,
-                  ["round-robin", "weighted-round-robin", "fill-first"].contains(strategy), input.body?.count == 1 else {
+                  MicPrismPoolSettings.strategies.contains(strategy), input.body?.count == 1 else {
                 throw MicPrismError.unsupported
             }
         }
         let routing: Routing = try await request(service.apiOrigin, "/prism/v1/routing", method: input.method, body: input.body, token: token, isCurrent: isCurrent)
-        guard ["round-robin", "weighted-round-robin", "fill-first"].contains(routing.strategy),
+        guard MicPrismPoolSettings.strategies.contains(routing.strategy),
               input.method != "PUT" || routing.strategy == input.body?["strategy"]?.stringValue else { throw MicPrismError.invalidResponse }
         try identity.require(input.path == "/identity/access" ? nil : permission)
         return try Self.response(["strategy": .string(routing.strategy)])
@@ -168,7 +178,7 @@ public struct MicPrismClient: Sendable {
         case 200..<300: break
         case 401: throw MicPrismError.signedOut
         case 403: throw MicPrismError.denied
-        case 409: throw path.hasPrefix("/v1/prism/instances/") || path.hasPrefix("/v1/prism/pairings/") ? MicPrismError.pairingConflict : MicPrismError.unavailable
+        case 409: throw path.hasPrefix("/v1/prism/instances/") || path.hasPrefix("/v1/prism/pairings/") ? MicPrismError.pairingConflict : MicPrismError.settingsConflict
         case 400: throw path.hasPrefix("/v1/prism/instances/") || path.hasPrefix("/v1/prism/pairings/") ? MicPrismError.invalidPairing : MicPrismError.invalidResponse
         case 404, 405, 501: throw MicPrismError.unsupported
         default: throw MicPrismError.unavailable
@@ -182,8 +192,9 @@ public struct MicPrismClient: Sendable {
               parts.scheme == "https" || (parts.scheme == "http" && ["localhost", "127.0.0.1", "[::1]", "::1"].contains(host)),
               parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
               !originOnly || parts.path.isEmpty || parts.path == "/" else { throw MicPrismError.invalidResponse }
-        parts.path = parts.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        parts.path = (parts.path.isEmpty ? "" : "/" + parts.path) + path
+        let prefix = parts.percentEncodedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard path.removingPercentEncoding != nil else { throw MicPrismError.invalidResponse }
+        parts.percentEncodedPath = (prefix.isEmpty ? "" : "/" + prefix) + path
         guard let url = parts.url else { throw MicPrismError.invalidResponse }
         return url
     }

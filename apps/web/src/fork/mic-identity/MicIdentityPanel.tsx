@@ -27,6 +27,7 @@ import {
 } from "./micIdentitySession";
 import { MicPrismPairing } from "./MicPrismPairing";
 import { MicPrismChat } from "./MicPrismChat";
+import { MicPrismManagementPanel } from "./MicPrismManagementPanel";
 
 type View = {
   authorityUrl: string;
@@ -80,7 +81,7 @@ export function MicIdentityPanel() {
             const gateway = yield* Effect.gen(function* () {
               if (access.session.permissions.includes("prism:inference"))
                 yield* getMicPrismStatus(bound);
-              return access.session.permissions.includes("prism:routing:read")
+              return access.session.permissions.includes("prism:routing:read") && !access.session.permissions.includes("prism:settings:read")
                 ? (yield* getMicPrismRouting(bound)).strategy
                 : null;
             }).pipe(Effect.result);
@@ -302,7 +303,7 @@ export function MicIdentityPanel() {
                       if (
                         value === "round-robin" ||
                         value === "weighted-round-robin" ||
-                        value === "fill-first"
+                        value === "fill-first" || value === "reset-priority"
                       )
                         void changeRouting(value);
                     }}
@@ -311,6 +312,7 @@ export function MicIdentityPanel() {
                     <option value="round-robin">Round robin</option>
                     <option value="weighted-round-robin">Weighted round robin</option>
                     <option value="fill-first">Fill first</option>
+                    <option value="reset-priority">Reset priority</option>
                   </select>
                 </SettingsRow>
                 {saved &&
@@ -337,13 +339,15 @@ export function MicIdentityPanel() {
                 onChanged={() => setAccessRevision((value) => value + 1)}
               />
             ) : null}
-            {current.access.session.capabilities.accountDetails ? (
-              <SettingsSection title="Management">
-                <SettingsRow
-                  title="Accounts and advanced settings"
-                  description="Remote account sign-in, reserves and advanced settings are not available from this service yet."
-                />
-              </SettingsSection>
+            {service && config?.authorityUrl ? (
+              <MicPrismManagementPanel
+                key={`${config.authorityUrl}:${generation}:${service.id}:${service.pairingRevision}:${service.apiUrl}`}
+                authorityUrl={config.authorityUrl}
+                service={service}
+                generation={generation}
+                permissions={current.access.session.permissions}
+                disabled={error !== null}
+              />
             ) : null}
           </>
         ) : (

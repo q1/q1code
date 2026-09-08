@@ -19,6 +19,7 @@ const ForkFlagOverrides = Schema.Struct(
 export const PrismRoutingStrategy = Schema.Literals([
   "round-robin",
   "weighted-round-robin",
+  "reset-priority",
   "fill-first",
 ]);
 export type PrismRoutingStrategy = typeof PrismRoutingStrategy.Type;

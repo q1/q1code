@@ -73,6 +73,7 @@ const NEW_ACCOUNT_HIGHLIGHT_MS = 6_000;
 const ROUTING_LABELS: Readonly<Record<PrismRoutingStrategy, string>> = {
   "round-robin": "Round robin",
   "weighted-round-robin": "Weighted round robin",
+  "reset-priority": "Reset priority",
   "fill-first": "Fill first",
 };
 

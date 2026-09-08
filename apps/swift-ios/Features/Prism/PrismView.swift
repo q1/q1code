@@ -124,7 +124,7 @@ public struct PrismView: View {
                     MicPrismInferenceView(client: client, environmentID: environmentID, enabled: !stale, service: service, authorityUrl: identityConfiguration.authorityUrl)
                         .id(environmentID + (identityConfiguration.authorityUrl ?? "") + service.id + String(service.pairingRevision) + service.apiUrl + (service.inferenceUrl ?? "") + (identity.session?.subject ?? "") + (identityController?.clerk?.session?.id ?? ""))
                 }
-                if identityRoutingRead {
+                if identityRoutingRead && identity?.session?.permissions.contains("prism:settings:read") != true {
                     Section("Pool routing") {
                         Picker("Routing strategy", selection: Binding(get: { strategy }, set: { value in
                             Task { await change(PrismRequest("/routing", method: "PUT", body: ["strategy": .string(value)])) }
@@ -133,16 +133,13 @@ public struct PrismView: View {
                             Text("Round robin").tag("round-robin")
                             Text("Weighted round robin").tag("weighted-round-robin")
                             Text("Fill first").tag("fill-first")
+                            Text("Reset priority").tag("reset-priority")
                         }.disabled(!identityRoutingWrite || strategy.isEmpty)
                     }
                 }
-                Section("Prism access") {
-                    Text("Service access is verified separately from engine health and model availability.")
-                        .foregroundStyle(.secondary)
-                    if identity?.session?.permissions.contains("prism:accounts:read") == true {
-                        Text("Remote account management is not available from this service yet.")
-                            .foregroundStyle(.secondary)
-                    }
+                if let identity, let service = identity.discovery?.service, let authorityURL = identityConfiguration.authorityUrl {
+                    MicPrismManagementView(client: client, environmentID: environmentID, authorityURL: authorityURL, service: service, permissions: identity.session?.permissions ?? [], enabled: !stale)
+                        .id(environmentID + authorityURL + service.id + String(service.pairingRevision) + service.apiUrl + (identity.session?.subject ?? "") + (identityController?.clerk?.session?.id ?? ""))
                 }
             } else if access.accountDetails {
                 Section("Gateway settings") {
@@ -301,7 +298,7 @@ public struct PrismView: View {
             loadedEnvironmentID = selected
             status = nextStatus; session = nextSession; stale = false; errorMessage = nil
             if config.enabled {
-                if identityRoutingRead {
+                if identityRoutingRead && identity?.session?.permissions.contains("prism:settings:read") != true {
                     let routing = try await client.prism(PrismRequest("/routing"), environmentID: selected)
                     guard selected == environmentID, generation == loadGeneration, !Task.isCancelled else { return }
                     strategy = routing.strategy ?? ""
