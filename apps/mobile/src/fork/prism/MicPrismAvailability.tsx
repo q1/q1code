@@ -20,7 +20,10 @@ import {
 } from "./micPrismModelOptions.logic";
 export { isMicPrismModel } from "./micPrismModelOptions.logic";
 const Context = createContext<Observation>({ value: null, error: null });
-const signedOutObservation: Observation = { value: null, error: "Sign in with mic.sc to check Prism." };
+const signedOutObservation: Observation = {
+  value: null,
+  error: "Sign in with mic.sc to check Prism.",
+};
 
 /** The signed-in app owns one aggregate observation; no provider identities enter coding views. */
 export function MicPrismAvailabilityProvider(props: {
@@ -72,9 +75,7 @@ export function MicPrismAvailabilityProvider(props: {
     };
   }, [props.active, props.input, foreground]);
   return (
-    <Context.Provider
-      value={props.active ? observation : signedOutObservation}
-    >
+    <Context.Provider value={props.active ? observation : signedOutObservation}>
       {props.children}
     </Context.Provider>
   );

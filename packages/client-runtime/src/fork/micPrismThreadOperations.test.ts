@@ -10,7 +10,9 @@ describe("Prism thread operation ordering", () => {
     let finish!: () => void;
     const retiring = enqueueMicPrismThreadOperation("same-environment/thread", async () => {
       events.push("old PUT");
-      await new Promise<void>((resolve) => { finish = resolve; });
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
       events.push("old DELETE");
     });
     const replacement = enqueueMicPrismThreadOperation("same-environment/thread", async () => {

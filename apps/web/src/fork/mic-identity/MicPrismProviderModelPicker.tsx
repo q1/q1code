@@ -80,7 +80,9 @@ function PoolPicker({
     if (
       instanceId === props.activeInstanceId &&
       props.model &&
-      !decorated.some((option) => option.slug === props.model || option.aliases?.includes(props.model))
+      !decorated.some(
+        (option) => option.slug === props.model || option.aliases?.includes(props.model),
+      )
     ) {
       decorated.push({ slug: props.model, name: props.model, isUnavailable: !selected?.available });
     }

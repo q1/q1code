@@ -68,7 +68,10 @@ import {
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
-import { MicPrismModelStatus, useMicPrismModelOptions } from "../../fork/prism/MicPrismAvailability";
+import {
+  MicPrismModelStatus,
+  useMicPrismModelOptions,
+} from "../../fork/prism/MicPrismAvailability";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
@@ -324,10 +327,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     () => buildModelOptions(props.serverConfig, currentModelSelection),
     [props.serverConfig, currentModelSelection],
   );
-  const modelOptions = useMicPrismModelOptions(props.serverConfig, catalogOptions, currentModelSelection);
+  const modelOptions = useMicPrismModelOptions(
+    props.serverConfig,
+    catalogOptions,
+    currentModelSelection,
+  );
   const modelUnavailable =
     props.connectionState === "connected" &&
-    (isModelSelectionUnavailable(props.serverConfig, currentModelSelection) || modelOptions.find((option) => option.selection.instanceId === currentModelSelection.instanceId && option.selection.model === currentModelSelection.model)?.isUnavailable === true);
+    (isModelSelectionUnavailable(props.serverConfig, currentModelSelection) ||
+      modelOptions.find(
+        (option) =>
+          option.selection.instanceId === currentModelSelection.instanceId &&
+          option.selection.model === currentModelSelection.model,
+      )?.isUnavailable === true);
   const connectionStatus = composerConnectionStatus({
     connectionError: props.connectionError,
     connectionState: props.connectionState,
@@ -798,7 +810,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                         maxWidth={152}
                         onPress={openSettings}
                       />
-                      <MicPrismModelStatus config={props.serverConfig} selection={currentModelSelection} />
+                      <MicPrismModelStatus
+                        config={props.serverConfig}
+                        selection={currentModelSelection}
+                      />
                     </View>
                   </View>
                 )}

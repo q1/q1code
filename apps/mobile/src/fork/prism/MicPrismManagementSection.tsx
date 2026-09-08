@@ -144,9 +144,7 @@ export function MicPrismManagementSection(props: {
                 revision={state.accounts!.settingsRevision}
                 observedAt={state.receivedAt}
                 disabled={!accountWrite}
-                save={(patch, revision) =>
-                  controller.patchAccount(account.id, patch, revision)
-                }
+                save={(patch, revision) => controller.patchAccount(account.id, patch, revision)}
                 remove={() => {
                   const revision = state.accounts!.settingsRevision;
                   Alert.alert(
@@ -344,10 +342,7 @@ function Account({
         onChange={(weight) => setDraft({ ...draft, weight, dirty: true })}
       />
       {draft.dirty && draft.revision !== revision ? (
-        <Action
-          label="Prism changed — load current values"
-          onPress={() => setDraft(null)}
-        />
+        <Action label="Prism changed — load current values" onPress={() => setDraft(null)} />
       ) : null}
       <View className="flex-row flex-wrap gap-2">
         <Action
@@ -445,10 +440,7 @@ function Settings({
           </>
         ) : null}
         {draft.dirty && draft.revision !== state.settingsRevision ? (
-          <Action
-            label="Prism changed — load current values"
-            onPress={() => setDraft(null)}
-          />
+          <Action label="Prism changed — load current values" onPress={() => setDraft(null)} />
         ) : null}
         <Action
           label="Save settings"

@@ -321,7 +321,10 @@ function MicService(props: {
         }
         setGateway(status.success);
       }
-      if (result.success.session.permissions.includes("prism:routing:read") && !result.success.session.permissions.includes("prism:settings:read")) {
+      if (
+        result.success.session.permissions.includes("prism:routing:read") &&
+        !result.success.session.permissions.includes("prism:settings:read")
+      ) {
         const routing = await runtime.runPromise(getMicPrismRouting(bound).pipe(Effect.result));
         if (!current()) return;
         if (routing._tag === "Success") setStrategy(routing.success.strategy);
@@ -420,7 +423,8 @@ function MicService(props: {
             disabled={busy || refreshing}
             onPress={() => void refresh()}
           />
-          {access?.session.permissions.includes("prism:routing:read") && !access.session.permissions.includes("prism:settings:read") ? (
+          {access?.session.permissions.includes("prism:routing:read") &&
+          !access.session.permissions.includes("prism:settings:read") ? (
             <View className="flex-row flex-wrap gap-2">
               {PRISM_ROUTING_OPTIONS.map((option) => (
                 <IdentityButton

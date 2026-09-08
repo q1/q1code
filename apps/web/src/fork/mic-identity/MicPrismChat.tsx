@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowUpIcon, SquareIcon, RefreshCwIcon } from "lucide-react";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { describeMicPrismAvailability, describeMicPrismWarning, streamMicPrismChat } from "@t3tools/client-runtime/fork";
+import {
+  describeMicPrismAvailability,
+  describeMicPrismWarning,
+  streamMicPrismChat,
+} from "@t3tools/client-runtime/fork";
 import type { MicPrismService } from "@q1code/core/micIdentity";
 import { Button } from "~/components/ui/button";
 import { runtime } from "~/lib/runtime";
@@ -35,13 +39,26 @@ export function MicPrismChat({
     isCurrent: () => micIdentityGeneration() === generation,
   });
 
-  const availability = useMicPrismAvailability({ authorityUrl, service, generation, disabled, revision });
+  const availability = useMicPrismAvailability({
+    authorityUrl,
+    service,
+    generation,
+    disabled,
+    revision,
+  });
   const models = availability.value?.models ?? [];
   const loading = availability.loading;
   const selected = models.find((entry) => entry.id === model);
   const canSend = selected?.available === true && availability.error === null;
   useEffect(() => {
-    if (availability.value) setModel((selected) => selected || availability.value!.models.find((entry) => entry.available)?.id || availability.value!.models[0]?.id || "");
+    if (availability.value)
+      setModel(
+        (selected) =>
+          selected ||
+          availability.value!.models.find((entry) => entry.available)?.id ||
+          availability.value!.models[0]?.id ||
+          "",
+      );
   }, [availability.value]);
   useEffect(() => () => active.current?.abort(), []);
   useEffect(() => {
@@ -108,12 +125,11 @@ export function MicPrismChat({
             {!model ? (
               <option value="">{loading ? "Loading models…" : "No models listed"}</option>
             ) : null}
-            {model && !selected ? (
-              <option value={model}>{model} — unavailable</option>
-            ) : null}
+            {model && !selected ? <option value={model}>{model} — unavailable</option> : null}
             {models.map((entry) => (
               <option key={entry.id} value={entry.id} disabled={!entry.available}>
-                {entry.id}{entry.available ? "" : " — unavailable"}
+                {entry.id}
+                {entry.available ? "" : " — unavailable"}
               </option>
             ))}
           </select>
@@ -132,9 +148,16 @@ export function MicPrismChat({
       </div>
       <div className="space-y-4 p-5">
         <p className="text-xs leading-relaxed text-muted-foreground">
-          {availability.error ?? (selected ? describeMicPrismAvailability(selected) : "Choose a configured model. Prism checks eligibility for each request.")}
+          {availability.error ??
+            (selected
+              ? describeMicPrismAvailability(selected)
+              : "Choose a configured model. Prism checks eligibility for each request.")}
         </p>
-        {selected?.warnings.map((warning) => <p key={warning} className="text-xs text-muted-foreground">{describeMicPrismWarning(warning)}</p>)}
+        {selected?.warnings.map((warning) => (
+          <p key={warning} className="text-xs text-muted-foreground">
+            {describeMicPrismWarning(warning)}
+          </p>
+        ))}
         <form
           onSubmit={(event) => {
             event.preventDefault();
