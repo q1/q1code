@@ -33,7 +33,18 @@ Upstream files are touched only at seams. A seam is at most 3 lines (one import 
 
 Prefer seam points built for extension: `builtInDrivers.ts`, `ExecutionEnvironmentCapabilities`, `settingsSearch.ts`, the command palette list, `ServerEnvironment.ts` capabilities, route tables. Do not seam inside the bodies of `ChatView.tsx`, `Sidebar.tsx`, or `ChatComposer.tsx`; if you must, the seam is one `<ForkSlot name="..." />` whose implementation lives in `apps/web/src/fork/`.
 
-`fork/SEAMS.md` lists every upstream file the series touches. Budget: 40 files. `scripts/fork/seams.ts` regenerates it and fails over budget.
+`fork/SEAMS.md` lists every upstream file the series touches. Budget: 48 files. `scripts/fork/seams.ts` regenerates it and fails over budget.
+
+The completed Prism integration adds eight files to the former 40-file scope:
+three mobile draft/composer lifecycle hooks, the browser composer slot, remote
+runtime construction, development proxy configuration, scoped HTTP preflight
+integration and its real-server test. These entry points own distinct context;
+their implementation remains in fork-owned modules. This budget includes tests
+and manifests under the existing counting rules. It does not relax marker,
+flags-off parity or seam-size requirements; larger temporary hooks are recorded
+in [the seam debt review](docs/prism-seam-debt.md). Removing an upstream surface
+during adaptation reduces the generated count; it does not create a new feature
+allowance automatically.
 
 ## Commits
 

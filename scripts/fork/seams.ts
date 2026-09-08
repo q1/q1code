@@ -4,7 +4,7 @@
 // the features (Fork-Feature trailers) and `fork:` markers behind each change.
 //
 //   node scripts/fork/seams.ts [--check] [--base main] [--head HEAD]
-//                              [--budget 40] [--out fork/SEAMS.md] [--no-write]
+//                              [--budget 48] [--out fork/SEAMS.md] [--no-write]
 //
 // --check exits 1 when the seam count exceeds the budget or a seam file carries
 // no `fork:` marker. Dependency-free on purpose: it runs before `vp i`.
@@ -65,7 +65,7 @@ function parseArgs(argv: ReadonlyArray<string>): Options {
   let check = false;
   let base = "main";
   let head = "HEAD";
-  let budget = 40;
+  let budget = 48;
   let out = "fork/SEAMS.md";
   let write = true;
   for (let index = 0; index < argv.length; index += 1) {
