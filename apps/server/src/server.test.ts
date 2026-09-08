@@ -1580,9 +1580,11 @@ const assertBrowserApiCorsPreflightHeaders = (
 ) => {
   assertBrowserApiCorsResponseHeaders(headers, options);
   assert.deepEqual(splitHeaderTokens(headers["access-control-allow-methods"] ?? null), [
+    "DELETE",
     "GET",
     "OPTIONS",
     "POST",
+    "PUT",
   ]);
   assert.deepEqual(splitHeaderTokens(headers["access-control-allow-headers"]), [
     "authorization",
@@ -1590,6 +1592,8 @@ const assertBrowserApiCorsPreflightHeaders = (
     "content-type",
     "dpop",
     "traceparent",
+    "x-mic-sc-prism-credential",
+    "x-mic-sc-session",
   ]);
 };
 const crossOriginClientOrigin = "http://remote-client.test:3773";
@@ -5158,6 +5162,23 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("allows remote Prism connect and disconnect browser preflights", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      for (const method of ["PUT", "DELETE"]) {
+        const response = yield* HttpClient.options("/api/fork/prism/identity/threads/test", {
+          headers: {
+            origin: crossOriginClientOrigin,
+            "access-control-request-method": method,
+            "access-control-request-headers": "authorization,x-mic-sc-prism-credential",
+          },
+        });
+        assert.equal(response.status, 204);
+        assertBrowserApiCorsPreflightHeaders(response.headers);
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("responds to browser OTLP trace preflight requests with CORS headers", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -5173,9 +5194,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.status, 204);
       assert.equal(response.headers["access-control-allow-origin"], "*");
       assert.deepEqual(splitHeaderTokens(response.headers["access-control-allow-methods"]), [
+        "DELETE",
         "GET",
         "OPTIONS",
         "POST",
+        "PUT",
       ]);
       assert.deepEqual(splitHeaderTokens(response.headers["access-control-allow-headers"]), [
         "authorization",
@@ -5183,6 +5206,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "content-type",
         "dpop",
         "traceparent",
+        "x-mic-sc-prism-credential",
+        "x-mic-sc-session",
       ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
