@@ -204,8 +204,13 @@ export class BrowserIdentityRelay {
         )
           return json({}, 502);
         // Do not resurrect a session revoked while the exchange was in flight.
-        if (this.sessions.get(cookie!) !== session || session.generation === "revoked")
+        if (this.sessions.get(cookie!) !== session || session.generation === "revoked") {
+          // The authority can finish exchange after local logout or replacement. Retire that grant too.
+          await this.upstream({ ...session, grant: grant.token }, "/v1/prism/cli/revoke", {})
+            .then((result) => result.body?.cancel())
+            .catch(() => undefined);
           return json({}, 401);
+        }
         session.grant = grant.token;
         session.expires = grant.expiresAt;
       }
