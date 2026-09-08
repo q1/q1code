@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpServerRequest, HttpClient, FetchHttpClient } from "effect/unstable/http";
 import * as ServerConfig from "../../config.ts";
@@ -64,6 +65,9 @@ const fixture = Effect.fn("test.prismThreadHttp.fixture")(function* (
   options: {
     readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
     readonly missingSid?: boolean;
+    readonly delegated?: boolean;
+    readonly decision?: Readonly<Record<string, unknown>>;
+    readonly decisionStatus?: number;
     readonly credential?: Readonly<Record<string, unknown>>;
     readonly stallCredential?: boolean;
   } = {},
@@ -90,6 +94,19 @@ const fixture = Effect.fn("test.prismThreadHttp.fixture")(function* (
   const threadId = `thread-http-${++sequence}`;
   const now = DateTime.toEpochMillis(yield* DateTime.now);
   const expiresAt = now + 60_000;
+  const delegatedToken = `msp1.${Buffer.from(
+    yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+      v: 1,
+      audience: "mic.sc/prism",
+      kind: "inference",
+      capability: "prism:inference",
+      subject: "mic-member",
+      sessionId: "clerk-session-one",
+      serviceInstanceId: "prism-fixture",
+      pairingRevision: 1,
+      expiresAt,
+    }),
+  ).toString("base64url")}.fixture`;
   const calls: {
     path: string;
     method: string;
@@ -112,6 +129,25 @@ const fixture = Effect.fn("test.prismThreadHttp.fixture")(function* (
         ),
         body: typeof init?.body === "string" ? init.body : null,
       });
+      if (url.pathname === "/v1/prism/authorize") {
+        expect(headers.get("x-prism-credential")).toBe(delegatedToken);
+        expect(headers.has("authorization")).toBe(false);
+        return Response.json(
+          {
+            authorized: true,
+            subject: "mic-member",
+            sessionId: "clerk-session-one",
+            serviceInstanceId: "prism-fixture",
+            pairingRevision: 1,
+            capabilities: ["prism:inference"],
+            inferenceUrl: "https://prism.example.test",
+            authorizationIssuedAt: now,
+            authorizationExpiresAt: expiresAt,
+            ...options.decision,
+          },
+          { status: options.decisionStatus ?? 200 },
+        );
+      }
       if (url.pathname === "/v1/identity")
         return Response.json({
           contractVersion: 1,
@@ -173,7 +209,9 @@ const fixture = Effect.fn("test.prismThreadHttp.fixture")(function* (
         HttpServerRequest.HttpServerRequest,
         HttpServerRequest.fromWeb(
           new Request("http://localhost/api/fork/prism/identity/threads/test", {
-            headers: { [MIC_IDENTITY_SESSION_HEADER]: fakeToken },
+            headers: options.delegated
+              ? { "x-mic-sc-prism-credential": delegatedToken }
+              : { [MIC_IDENTITY_SESSION_HEADER]: fakeToken },
           }),
         ),
       ),
@@ -351,4 +389,57 @@ it.live("cancels pending credential exchange without retaining a thread endpoint
       ),
     ).toBeUndefined();
   }).pipe(Effect.provide(sessionLayer())),
+);
+
+it.live(
+  "independently authorizes delegated inference without forwarding a human or environment grant",
+  () =>
+    Effect.gen(function* () {
+      const h = yield* fixture({ delegated: true });
+      const receipt = yield* h.connect;
+      expect(receipt).toEqual({
+        threadId: h.threadId,
+        expiresAt: h.expiresAt,
+        serviceInstanceId: "prism-fixture",
+        pairingRevision: 1,
+      });
+      expect(h.calls.map((call) => call.path)).toEqual(["/v1/prism/authorize"]);
+      expect(h.calls.some((call) => call.hasEnvironmentToken)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(sessionLayer())),
+);
+for (const decision of [
+  { subject: "other-human" },
+  { sessionId: "other-session" },
+  { serviceInstanceId: "other-host" },
+  { pairingRevision: 2 },
+  { capabilities: [] },
+  { authorized: false },
+  { authorizationExpiresAt: 0 },
+  { inferenceUrl: "https://prism.example.test/?credential=forbidden" },
+]) {
+  it.live(`rejects delegated authority mismatch ${JSON.stringify(decision)}`, () =>
+    Effect.gen(function* () {
+      const h = yield* fixture({ delegated: true, decision });
+      const result = yield* h.connect.pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+    }).pipe(Effect.scoped, Effect.provide(sessionLayer())),
+  );
+}
+for (const status of [401, 403]) {
+  it.live(`rejects a revoked delegated credential (${status})`, () =>
+    Effect.gen(function* () {
+      const h = yield* fixture({ delegated: true, decisionStatus: status });
+      expect((yield* h.connect.pipe(Effect.result))._tag).toBe("Failure");
+      expect(
+        yield* Effect.promise(() => authorizeMicPrismThread(h.threadId, h.issued.sessionId)),
+      ).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(sessionLayer())),
+  );
+}
+it.live("delegated inference never grants environment execution scope", () =>
+  Effect.gen(function* () {
+    const h = yield* fixture({ delegated: true, scopes: [] });
+    expect((yield* h.connect.pipe(Effect.result))._tag).toBe("Failure");
+    expect(h.calls).toHaveLength(0);
+  }).pipe(Effect.scoped, Effect.provide(sessionLayer())),
 );

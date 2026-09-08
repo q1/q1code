@@ -75,6 +75,76 @@ describe("prismClient", () => {
       }
     }),
   );
+  it.effect(
+    "exchanges a browser relay handle before connecting a remote environment and checks host receipts",
+    () =>
+      Effect.gen(function* () {
+        for (const host of ["host_test", "wrong-host"]) {
+          const server = capture((url) => {
+            const path = new URL(url).pathname;
+            if (path === "/v1/identity")
+              return Response.json({
+                contractVersion: 1,
+                subject: "member",
+                role: "member",
+                permissions: ["prism:inference"],
+                authorizationRevision: "r1",
+                authorizationExpiresAt: 800_000,
+              });
+            if (path === "/v1/prism/discovery")
+              return Response.json({
+                contractVersion: 1,
+                selectionRevision: 1,
+                service: {
+                  serviceInstanceId: "host_test",
+                  displayName: "Test Prism",
+                  apiOrigin: "https://gateway.example.test",
+                  inferenceOrigin: "https://gateway.example.test",
+                  pairingRevision: 2,
+                  protocolVersion: 1,
+                  publicKey: "MCowBQYDK2VwAyEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                  status: "paired",
+                },
+              });
+            if (path === "/v1/prism/credentials")
+              return Response.json({
+                version: 1,
+                tokenType: "Bearer",
+                token: "msp1.fixture.signature",
+                expiresAt: 800_000,
+                serviceInstanceId: "host_test",
+                pairingRevision: 2,
+              });
+            return Response.json({
+              threadId: "requested",
+              expiresAt: 800_000,
+              serviceInstanceId: host,
+              pairingRevision: 2,
+            });
+          });
+          const getToken = () => Effect.succeed("q1br_fixture");
+          const result = yield* connectMicPrismThread({
+            prepared: prepared({ _tag: "Bearer", token: "environment-token" }),
+            signer: Option.none(),
+            micScToken: getToken,
+            threadId: "requested",
+            micIdentity: { baseUrl: "https://identity.example.test", getToken },
+          }).pipe(Effect.provide(server.layer), Effect.result);
+          expect(result._tag).toBe(host === "host_test" ? "Success" : "Failure");
+          const remote = server.calls.filter(
+            (call) => new URL(call.url).host === "environment.example.test",
+          );
+          expect(remote).toHaveLength(1);
+          const headers = new Headers(remote[0]!.init.headers);
+          expect(headers.get("authorization")).toBe("Bearer environment-token");
+          expect(headers.get("x-mic-sc-prism-credential")).toBe("msp1.fixture.signature");
+          expect(headers.has("x-mic-sc-session")).toBe(false);
+          expect(Array.from(headers.values()).some((value) => value.includes("q1br_fixture"))).toBe(
+            false,
+          );
+        }
+      }),
+  );
   it.effect("bootstraps sign-in through environment auth without requesting a human token", () =>
     Effect.gen(function* () {
       const server = capture(() =>

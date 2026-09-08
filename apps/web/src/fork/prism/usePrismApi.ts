@@ -49,6 +49,7 @@ import {
   subscribeMicIdentity,
 } from "../mic-identity/micIdentitySession";
 
+import { readBrowserIdentityAuthority } from "../mic-identity/browserIdentityRelay";
 import { describePrismPermissionError } from "./prismAccountsState";
 
 export type PrismCallError = PrismClientError | { readonly _tag: "UnknownError" };
@@ -90,7 +91,22 @@ const bindCalls = (
 
   return {
     connectThread: (threadId: string) =>
-      run((input) => connectMicPrismThread({ ...input, threadId })),
+      run((input) => {
+        const authorityUrl = readBrowserIdentityAuthority();
+        return connectMicPrismThread({
+          ...input,
+          threadId,
+          ...(authorityUrl
+            ? {
+                micIdentity: {
+                  baseUrl: authorityUrl,
+                  getToken: readMicIdentityToken,
+                  isCurrent: () => micIdentityGeneration() === generation,
+                },
+              }
+            : {}),
+        });
+      }),
     disconnectThread: (threadId: string) =>
       run((input) => disconnectMicPrismThread({ ...input, threadId }), false),
     identityConfig: () => run(getPrismIdentityConfig),
