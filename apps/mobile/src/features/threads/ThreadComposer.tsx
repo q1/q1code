@@ -74,6 +74,7 @@ import {
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
+import { MicPrismModelStatus, useMicPrismModelOptions } from "../../fork/prism/MicPrismAvailability";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
@@ -305,9 +306,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       : "Send";
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
+  const catalogOptions = useMemo(
+    () => buildModelOptions(props.serverConfig, currentModelSelection),
+    [props.serverConfig, currentModelSelection],
+  );
+  const modelOptions = useMicPrismModelOptions(props.serverConfig, catalogOptions, currentModelSelection);
   const modelUnavailable =
     props.connectionState === "connected" &&
-    isModelSelectionUnavailable(props.serverConfig, currentModelSelection);
+    (isModelSelectionUnavailable(props.serverConfig, currentModelSelection) ||
+      modelOptions.find(
+        (option) =>
+          option.selection.instanceId === currentModelSelection.instanceId &&
+          option.selection.model === currentModelSelection.model,
+      )?.isUnavailable === true);
   const selectedProviderStatus = useMemo(() => {
     if (!props.serverConfig) return null;
     return (
@@ -481,10 +492,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   ]);
 
   // ── Model menu ───────────────────────────────────────────
-  const modelOptions = useMemo(
-    () => buildModelOptions(props.serverConfig, currentModelSelection),
-    [props.serverConfig, currentModelSelection],
-  );
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
   // An existing thread is bound to its harness: sessions can't move between
   // provider instances, so the picker only offers the thread's own group.
@@ -813,6 +820,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                         maxWidth="100%"
                         onPress={openSettings}
                       />
+                      <MicPrismModelStatus config={props.serverConfig} selection={currentModelSelection} />
                     </View>
                   </View>
                 )}

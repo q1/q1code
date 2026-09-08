@@ -13,6 +13,7 @@ import {
 } from "../connection/model.ts";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import {
+  connectMicPrismThread,
   deletePrismAccount,
   getPrismIdentityConfig,
   getPrismStatus,
@@ -48,6 +49,32 @@ const capture = (respond: (url: string, init: RequestInit) => Response) => {
 };
 
 describe("prismClient", () => {
+  it.effect("accepts only a current, bounded receipt for the requested thread", () =>
+    Effect.gen(function* () {
+      for (const receipt of [
+        { threadId: "requested", expiresAt: 800_000 },
+        { threadId: "other-thread", expiresAt: 800_000 },
+        { threadId: "requested", expiresAt: 0 },
+        { threadId: "requested", expiresAt: 931_000 },
+      ]) {
+        const server = capture(() => Response.json(receipt));
+        const result = yield* connectMicPrismThread({
+          prepared: prepared({ _tag: "Bearer", token: "environment-token" }),
+          signer: Option.none(),
+          micScToken: () => Effect.succeed("fixture-human-token"),
+          threadId: "requested",
+        }).pipe(Effect.provide(server.layer), Effect.result);
+        if (receipt.threadId === "requested" && receipt.expiresAt === 800_000) {
+          expect(result._tag).toBe("Success");
+        } else {
+          expect(result._tag).toBe("Failure");
+          if (result._tag === "Failure")
+            expect(result.failure._tag).toBe("MicIdentityUnavailableError");
+        }
+        expect(server.calls).toHaveLength(1);
+      }
+    }),
+  );
   it.effect("bootstraps sign-in through environment auth without requesting a human token", () =>
     Effect.gen(function* () {
       const server = capture(() =>

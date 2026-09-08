@@ -1,4 +1,8 @@
 import type { MicIdentityPublicConfig } from "@q1code/core/micIdentityApi";
+import {
+  enqueueMicPrismThreadOperation as enqueue,
+  pendingMicPrismThreadOperation,
+} from "@t3tools/client-runtime/fork";
 import type { PrismApi, PrismCallError } from "../prism/usePrismApi";
 
 type Api = Pick<PrismApi, "connectThread" | "disconnectThread" | "identityConfig">;
@@ -19,17 +23,6 @@ type Entry = {
 export const micPrismThreadKey = (environmentId: string, threadId: string) =>
   `${environmentId}/${threadId}`;
 
-// Serialize across identity-controller lifetimes: an old DELETE must finish before a new user's PUT.
-const lanes = new Map<string, Promise<void>>();
-function enqueue(key: string, operation: () => Promise<void>) {
-  const queued = (lanes.get(key) ?? Promise.resolve()).then(operation, operation);
-  const settled = queued.catch(() => {});
-  lanes.set(key, settled);
-  void settled.finally(() => {
-    if (lanes.get(key) === settled) lanes.delete(key);
-  });
-  return queued;
-}
 const sameConfig = (a: MicIdentityPublicConfig, b: MicIdentityPublicConfig) =>
   a.enabled &&
   b.enabled &&
@@ -56,7 +49,7 @@ export function createMicPrismThreadConnections(
     const key = micPrismThreadKey(environmentId, threadId);
     const entry = entries.get(key);
     if (!entry || entry.state.status === "disconnecting")
-      return lanes.get(key) ?? Promise.resolve();
+      return pendingMicPrismThreadOperation(key);
     entry.desired = false;
     entry.state = { status: "disconnecting", error: message };
     publish();

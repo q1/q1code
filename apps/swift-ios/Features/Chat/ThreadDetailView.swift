@@ -677,7 +677,9 @@ public struct ThreadDetailView: View {
                     onUserInputSubmit: { id, answers in
                         Task { await model.resolveUserInput(id, answers: answers) }
                     },
-                    onRefreshModels: refreshThreadEnvironmentModels
+                    onRefreshModels: refreshThreadEnvironmentModels,
+                    prismClient: model.client,
+                    prismEnvironment: model.snapshot.environments.first { $0.id == currentThread.environmentID }
                 )
             }
             .background(T3Colors.background)

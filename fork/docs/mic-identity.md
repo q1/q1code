@@ -41,9 +41,10 @@ are preserved. A failed availability check retains the last observation and
 pauses new requests until it can be refreshed. Ordinary users do not receive
 account labels, emails or per-account quota details.
 
-The web and desktop coding model picker applies the same eligibility to pooled
-Claude/Codex routes. Its Prism indicator expands to model warnings; the direct
-provider option keeps the environment's independent credentials and settings.
+The web, desktop, React Native and Swift coding model pickers apply the same
+eligibility to pooled Claude/Codex routes. Their Prism indicator opens model
+warnings and links to account management. The direct provider option keeps the
+environment's independent credentials and settings.
 
 ## Connect a coding thread
 

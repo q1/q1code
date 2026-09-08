@@ -1,6 +1,6 @@
 import { ClerkProvider, useAuth } from "@clerk/expo";
 import type { MicIdentityPublicConfig } from "@q1code/core/micIdentityApi";
-import { readForkFlag } from "@t3tools/client-runtime/fork";
+import { enqueueMicPrismThreadOperation, readForkFlag } from "@t3tools/client-runtime/fork";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as SecureStore from "expo-secure-store";
 import {
@@ -21,6 +21,7 @@ import { useServerConfigs } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { freshMicMobileToken, resolveMicMobileIdentityMode } from "./micIdentity.logic";
 import { MicPrismTokenContext } from "./micIdentityContext";
+import { MicPrismAvailabilityProvider } from "./MicPrismAvailability";
 import { type PrismApi, usePrismApi } from "./usePrismApi";
 
 type Binding = {
@@ -175,15 +176,24 @@ function ThreadBridgeProvider(props: {
     () => freshMicMobileToken(props.getToken, isCurrent)(),
     [props.getToken, isCurrent],
   );
-  const disconnect = useCallback(async (environmentId: EnvironmentId, threadId: string) => {
+  const clearBinding = useCallback((environmentId: EnvironmentId, threadId: string) => {
     const key = bindingKey(environmentId, threadId);
     generations.current.set(key, (generations.current.get(key) ?? 0) + 1);
     bindings.current.delete(key);
     setSnapshot(new Map(bindings.current));
-    const result = await apis.current.get(environmentId)?.disconnectIdentityThread(threadId);
-    if (result?._tag === "error")
-      setError("Could not confirm disconnection. Prism access will expire unless renewed.");
   }, []);
+  const disconnect = useCallback(
+    async (environmentId: EnvironmentId, threadId: string) => {
+      clearBinding(environmentId, threadId);
+      const api = apis.current.get(environmentId);
+      await enqueueMicPrismThreadOperation(bindingKey(environmentId, threadId), async () => {
+        const result = await api?.disconnectIdentityThread(threadId);
+        if (result?._tag === "error")
+          setError("Could not confirm disconnection. Prism access will expire unless renewed.");
+      });
+    },
+    [clearBinding],
+  );
   const connect = useCallback(
     async (environmentId: EnvironmentId, threadId: string) => {
       const api = apis.current.get(environmentId);
@@ -192,13 +202,18 @@ function ThreadBridgeProvider(props: {
       pending.current.add(key);
       const generation = generations.current.get(key) ?? 0;
       try {
+        await enqueueMicPrismThreadOperation(key, async () => {
+        if (!valid.current || generation !== (generations.current.get(key) ?? 0)) return;
         const config = await api.identityConfig();
+        if (!valid.current || generation !== (generations.current.get(key) ?? 0)) return;
         if (
           config._tag !== "ok" ||
-          config.value.authorityUrl !== props.config.authorityUrl ||
-          config.value.clerkPublishableKey !== props.config.clerkPublishableKey
-        ) {
-          await disconnect(environmentId, threadId);
+          !config.value.enabled ||
+            config.value.authorityUrl !== props.config.authorityUrl ||
+            config.value.clerkPublishableKey !== props.config.clerkPublishableKey
+          ) {
+            clearBinding(environmentId, threadId);
+          await api.disconnectIdentityThread(threadId);
           setError(
             "The mic.sc authority changed. Refresh sign-in before reconnecting this thread.",
           );
@@ -211,7 +226,8 @@ function ThreadBridgeProvider(props: {
           return;
         }
         if (result._tag === "error") {
-          await disconnect(environmentId, threadId);
+            clearBinding(environmentId, threadId);
+          await api.disconnectIdentityThread(threadId);
           setError(
             "Prism access could not be renewed for this thread. Reconnect after checking sign-in and environment permissions.",
           );
@@ -220,11 +236,13 @@ function ThreadBridgeProvider(props: {
         bindings.current.set(key, { environmentId, threadId, expiresAt: result.value.expiresAt });
         setSnapshot(new Map(bindings.current));
         setError(null);
+        });
       } finally {
         pending.current.delete(key);
       }
     },
-    [disconnect, props.config.authorityUrl, props.config.clerkPublishableKey],
+    // oxlint-disable-next-line react/memo-dependencies -- The queued callback captures this authority and cleanup function.
+    [clearBinding, props.config.authorityUrl, props.config.clerkPublishableKey],
   );
   const invalidate = useCallback(() => {
     invalidated.current = true;
@@ -254,10 +272,12 @@ function ThreadBridgeProvider(props: {
       valid.current = false;
       clearInterval(timer);
       listener.remove();
+      for (const key of pending.current)
+        generations.current.set(key, (generations.current.get(key) ?? 0) + 1);
       for (const binding of bindings.current.values())
-        void apis.current.get(binding.environmentId)?.disconnectIdentityThread(binding.threadId);
+        void disconnect(binding.environmentId, binding.threadId);
     };
-  }, [connect, props.identityKey]);
+  }, [connect, disconnect, props.identityKey]);
   const register = useCallback((environmentId: EnvironmentId, api: PrismApi | null) => {
     if (api) {
       apis.current.set(environmentId, api);
@@ -275,7 +295,9 @@ function ThreadBridgeProvider(props: {
       generations.current.set(key, (generations.current.get(key) ?? 0) + 1);
       bindings.current.delete(key);
       changed = true;
-      void previous?.disconnectIdentityThread(binding.threadId);
+      void enqueueMicPrismThreadOperation(key, async () => {
+        await previous?.disconnectIdentityThread(binding.threadId);
+      });
     }
     if (changed) setSnapshot(new Map(bindings.current));
   }, []);
@@ -291,6 +313,7 @@ function ThreadBridgeProvider(props: {
     }),
     [props.config, snapshot, active, error, connect, disconnect, invalidate],
   );
+  const availabilityInput = useMemo(() => ({ baseUrl: props.config.authorityUrl!, getToken: source, isCurrent }), [props.config.authorityUrl, source, isCurrent]);
   return (
     <MicPrismTokenContext.Provider value={source}>
       <MicPrismThreadBridgeContext.Provider value={value}>
@@ -301,7 +324,9 @@ function ThreadBridgeProvider(props: {
             register={register}
           />
         ))}
-        {props.children}
+        <MicPrismAvailabilityProvider input={availabilityInput} active={active && Boolean(props.config.authorityUrl)}>
+          {props.children}
+        </MicPrismAvailabilityProvider>
       </MicPrismThreadBridgeContext.Provider>
     </MicPrismTokenContext.Provider>
   );

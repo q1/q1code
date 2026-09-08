@@ -13,6 +13,8 @@ public struct ProviderModelPicker: View {
     let isLoading: Bool
     let threadSelection: FeatureSelection?
     let materializesDefaultSelection: Bool
+    let preservesSelection: Bool
+    private let getModelDisabledReason: ((String, String) -> String?)?
     private let onPresentationChange: ((Bool) -> Void)?
     private let onRefresh: (@MainActor () async throws -> Void)?
 
@@ -26,6 +28,8 @@ public struct ProviderModelPicker: View {
         isLoading: Bool = false,
         threadSelection: FeatureSelection? = nil,
         materializesDefaultSelection: Bool = true,
+        preservesSelection: Bool = false,
+        getModelDisabledReason: ((String, String) -> String?)? = nil,
         onRefresh: (@MainActor () async throws -> Void)? = nil,
         onPresentationChange: ((Bool) -> Void)? = nil
     ) {
@@ -36,6 +40,8 @@ public struct ProviderModelPicker: View {
         self.isLoading = isLoading
         self.threadSelection = threadSelection
         self.materializesDefaultSelection = materializesDefaultSelection
+        self.preservesSelection = preservesSelection
+        self.getModelDisabledReason = getModelDisabledReason
         self.onRefresh = onRefresh
         self.onPresentationChange = onPresentationChange
     }
@@ -98,6 +104,8 @@ public struct ProviderModelPicker: View {
                 isLoading: isLoading,
                 threadSelection: threadSelection,
                 materializesDefaultSelection: materializesDefaultSelection,
+                preservesSelection: preservesSelection,
+                getModelDisabledReason: getModelDisabledReason,
                 onRefresh: onRefresh.map { refresh in
                     {
                         preservesSelectionDuringRefresh = true
@@ -126,6 +134,7 @@ public struct ProviderModelPicker: View {
     }
 
     private var resolvedSelection: FeatureSelection? {
+        if preservesSelection, let selected = selection ?? threadSelection { return selected }
         if materializesDefaultSelection {
             return ProviderModelSelectionResolver.materialized(selection, in: normalizedProviders)
         }
@@ -137,6 +146,7 @@ public struct ProviderModelPicker: View {
     }
 
     private func materializeSelection() {
+        if preservesSelection, selection != nil || threadSelection != nil { return }
         guard !normalizedProviders.isEmpty else { return }
         let resolved = materializesDefaultSelection
             ? ProviderModelSelectionResolver.materialized(selection, in: normalizedProviders)
@@ -180,6 +190,7 @@ public struct ProviderModelPicker: View {
     }
 
     private var unavailableSelectionLabel: String {
+        if preservesSelection, let selected = selection ?? threadSelection { return selected.modelID + " (Unavailable)" }
         if isLoading { return "Loading models" }
         if normalizedProviders.isEmpty { return "No providers" }
         if !normalizedProviders.contains(where: \.isAvailable) { return "Providers offline" }
@@ -214,6 +225,8 @@ private struct ModelPickerSheet: View {
     let isLoading: Bool
     let threadSelection: FeatureSelection?
     let materializesDefaultSelection: Bool
+    let preservesSelection: Bool
+    let getModelDisabledReason: ((String, String) -> String?)?
     let onRefresh: (@MainActor () async throws -> Void)?
 
     @AppStorage("swift-ios.model-picker.favorites") private var favoriteStorage = ""
@@ -235,6 +248,8 @@ private struct ModelPickerSheet: View {
         isLoading: Bool,
         threadSelection: FeatureSelection?,
         materializesDefaultSelection: Bool,
+        preservesSelection: Bool,
+        getModelDisabledReason: ((String, String) -> String?)?,
         onRefresh: (@MainActor () async throws -> Void)?
     ) {
         self.providers = providers
@@ -242,8 +257,10 @@ private struct ModelPickerSheet: View {
         self.isLoading = isLoading
         self.threadSelection = threadSelection
         self.materializesDefaultSelection = materializesDefaultSelection
+        self.preservesSelection = preservesSelection
+        self.getModelDisabledReason = getModelDisabledReason
         self.onRefresh = onRefresh
-        let initialSelection = Self.effectiveSelection(
+        let initialSelection = preservesSelection ? selection.wrappedValue ?? threadSelection : Self.effectiveSelection(
             explicit: selection.wrappedValue,
             inherited: threadSelection,
             providers: providers,
@@ -501,21 +518,25 @@ private struct ModelPickerSheet: View {
         let isSelected = pickerSelection?.providerID == option.provider.id
             && pickerSelection?.modelID == option.model.id
         let isFavorite = favoriteIDs.contains(option.id)
+        let reason = getModelDisabledReason?(option.provider.id, option.model.id)
         return HStack(spacing: 10) {
             Button {
                 select(option)
             } label: {
-                ModelOptionLabel(
-                    option: option,
-                    isSelected: isSelected,
-                    showsProvider: showsProvider,
-                    disambiguatesModel: disambiguatesModel
-                )
+                VStack(alignment: .leading, spacing: 3) {
+                    ModelOptionLabel(
+                        option: option,
+                        isSelected: isSelected,
+                        showsProvider: showsProvider,
+                        disambiguatesModel: disambiguatesModel
+                    )
+                    if let reason { Text(reason).font(.caption).foregroundStyle(.secondary) }
+                }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(isLocked(option))
-            .opacity(isLocked(option) ? 0.36 : 1)
+            .disabled(isLocked(option) || reason != nil)
+            .opacity(isLocked(option) || reason != nil ? 0.36 : 1)
             .accessibilityLabel(option.model.name)
             .accessibilityValue(
                 disambiguatesModel
@@ -525,9 +546,9 @@ private struct ModelPickerSheet: View {
             .accessibilityAddTraits(isSelected ? .isSelected : [])
             .accessibilityIdentifier("model-option-\(option.id)")
             .accessibilityHint(
-                isLocked(option)
+                reason ?? (isLocked(option)
                     ? "This task cannot change models."
-                    : "Select this model."
+                    : "Select this model.")
             )
 
             Button {
@@ -776,7 +797,8 @@ private struct ModelPickerSheet: View {
     }
 
     private var committedSelection: FeatureSelection? {
-        Self.effectiveSelection(
+        if preservesSelection { return selection ?? threadSelection }
+        return Self.effectiveSelection(
             explicit: selection,
             inherited: threadSelection,
             providers: providers,
@@ -789,20 +811,25 @@ private struct ModelPickerSheet: View {
     }
 
     private func select(_ option: DailyUXModelOption) {
-        guard !isLocked(option) else { return }
-        let next = ProviderModelDraftPolicy.selection(
+        guard !isLocked(option), getModelDisabledReason?(option.provider.id, option.model.id) == nil else { return }
+        var next = ProviderModelDraftPolicy.selection(
             for: option,
             cached: modelDrafts[option.id],
             current: pickerSelection,
             committed: committedSelection
         )
+        if getModelDisabledReason != nil, pickerSelection?.providerID == option.provider.id,
+           let route = pickerSelection?.options.first(where: { $0.id == "prism-route" }) {
+            next.options = next.options.filter { $0.id != route.id } + [route]
+        }
         draftSelection = next
         rememberDraft(next)
         hasEditedDraft = next != committedSelection
     }
 
     private var hasDraftChanges: Bool {
-        hasEditedDraft && draftSelection != nil && draftSelection != committedSelection
+        hasEditedDraft && draftSelection != nil && draftSelection != committedSelection &&
+        draftSelection.map { getModelDisabledReason?($0.providerID, $0.modelID) == nil } == true
     }
 
     private func applySelection() {

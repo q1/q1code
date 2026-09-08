@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -140,7 +141,7 @@ it("pruneSyncTombstones drops tombstones older than the TTL", () => {
 });
 
 const flagsLayer = (config: ForkConfig, prism = true) => {
-  const values: ForkFlagValues = { ...DEFAULT_FORK_FLAGS, prism };
+  const values: ForkFlagValues = { ...DEFAULT_FORK_FLAGS, prism, ...config.flags };
   return Layer.succeed(
     ForkFlagsService,
     ForkFlagsService.of({
@@ -170,10 +171,11 @@ const makeNode = (input: {
   readonly config: ForkConfig;
   readonly env: Record<string, string | undefined>;
   readonly transport: Layer.Layer<PrismSyncTransport>;
+  readonly flags?: Layer.Layer<ForkFlagsService>;
   readonly ticker?: (interval: unknown) => Stream.Stream<unknown>;
 }) =>
   Layer.fresh(layerWithoutRuntime).pipe(
-    Layer.provide(flagsLayer(input.config)),
+    Layer.provide(input.flags ?? flagsLayer(input.config)),
     Layer.provide(identityLayer(input.id)),
     Layer.provide(Layer.succeed(ForkFlagsEnvironment, input.env)),
     Layer.provide(input.transport),
@@ -234,6 +236,109 @@ const readAuths = Effect.gen(function* () {
 const KEY = "shared-secret";
 
 it.layer(NodeServices.layer, { excludeTestServices: true })("PrismSync", (it) => {
+  it.effect("identity clients and disabled Prism leave retained primary and replica sync idle", () =>
+    Effect.gen(function* () {
+      for (const enabledFlags of [
+        { prism: true, "mic-identity": true },
+        { prism: false, "mic-identity": false },
+      ]) {
+        for (const role of ["primary", "replica"] as const) {
+          let tickerStarts = 0;
+          const node = makeNode({
+            id: `disabled-${role}-${enabledFlags.prism}`,
+            config: {
+              flags: enabledFlags,
+              prism: { sync: { role, primaryUrl: "http://primary" } },
+            },
+            env: { Q1CODE_PRISM_SYNC_KEY: KEY, Q1CODE_PRISM_SYNC_TOKEN: "token" },
+            transport: noTransport,
+            ticker: () => {
+              tickerStarts++;
+              return Stream.empty;
+            },
+          });
+          yield* Effect.gen(function* () {
+            const service = yield* PrismSyncService;
+            yield* writeAuth("kept.json", '{"access_token":"test-kept"}', T0);
+            for (const operation of [
+              service.exportBundle,
+              service.applyPush([]),
+              service.syncNow,
+              service.recordTombstone("kept.json"),
+            ]) {
+              const result = yield* operation.pipe(Effect.flip);
+              assert.equal(result._tag, "PrismSyncNotConfigured");
+              assert.equal(result.message, "Legacy Prism sync is disabled.");
+            }
+            yield* Effect.yieldNow;
+            assert.equal(tickerStarts, 0);
+            assert.deepEqual(yield* service.status, { role: "standalone" });
+            assert.deepEqual(yield* readAuths, { "kept.json": '{"access_token":"test-kept"}' });
+            assert.isNull(yield* readTombstoneFile);
+          }).pipe(Effect.provide(node));
+        }
+      }
+    }),
+  );
+
+  it.effect("a pending replica fetch cannot write after mic-identity is enabled", () =>
+    Effect.gen(function* () {
+      const values = yield* Ref.make<ForkFlagValues>({
+        ...DEFAULT_FORK_FLAGS,
+        prism: true,
+        "mic-identity": false,
+      });
+      const config: ForkConfig = {
+        prism: { sync: { role: "replica", primaryUrl: "http://primary" } },
+      };
+      const fetchStarted = yield* Deferred.make<void>();
+      const releaseFetch = yield* Deferred.make<void>();
+      const ciphertext = yield* encryptSyncEntry(
+        deriveSyncKey(KEY),
+        new TextEncoder().encode('{"access_token":"test-new"}'),
+      );
+      const node = makeNode({
+        id: "identity-during-fetch",
+        config,
+        env: { Q1CODE_PRISM_SYNC_KEY: KEY, Q1CODE_PRISM_SYNC_TOKEN: "token" },
+        flags: Layer.succeed(ForkFlagsService, ForkFlagsService.of({
+          current: Ref.get(values),
+          reload: Ref.get(values),
+          changes: Stream.empty,
+          config: Effect.succeed(config),
+          update: () => Effect.die("unexpected fork.json update"),
+        })),
+        ticker: () => Stream.empty,
+        transport: Layer.succeed(PrismSyncTransport, PrismSyncTransport.of({
+          fetchExport: () => Effect.gen(function* () {
+            yield* Deferred.succeed(fetchStarted, undefined);
+            yield* Deferred.await(releaseFetch);
+            return {
+              version: 3,
+              generatedAt: T2,
+              primaryEnvironmentId: "primary",
+              entries: [{ id: "new.json", updatedAt: T1, ciphertext }],
+              tombstones: [{ id: "kept.json", deletedAt: T1 }],
+            };
+          }),
+          push: () => Effect.die("unexpected push"),
+        })),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* PrismSyncService;
+        yield* writeAuth("kept.json", '{"access_token":"test-kept"}', T0);
+        const pending = yield* service.syncNow.pipe(Effect.flip, Effect.forkChild);
+        yield* Deferred.await(fetchStarted);
+        yield* Ref.update(values, (current) => ({ ...current, "mic-identity": true }));
+        yield* Deferred.succeed(releaseFetch, undefined);
+        assert.equal((yield* Fiber.join(pending))._tag, "PrismSyncNotConfigured");
+        assert.deepEqual(yield* readAuths, { "kept.json": '{"access_token":"test-kept"}' });
+        assert.isNull(yield* readTombstoneFile);
+        assert.deepEqual(yield* service.status, { role: "standalone" });
+      }).pipe(Effect.provide(node));
+    }),
+  );
+
   it.effect("primary exports serving snapshots and rejects credential pushes", () =>
     Effect.gen(function* () {
       const primary = makeNode({

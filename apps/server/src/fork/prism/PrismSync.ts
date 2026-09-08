@@ -19,6 +19,7 @@ import {
   PRISM_SYNC_DEFAULT_TOKEN_SECRET_NAME,
   type PrismSyncConfig,
 } from "@q1code/core/config";
+import type { ForkFlagValues } from "@q1code/core/flags";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -199,7 +200,7 @@ export class PrismSyncService extends Context.Service<
     /** Replica: one pull-then-push cycle against the primary. */
     readonly syncNow: Effect.Effect<void, PrismSyncError>;
     /** Any role: remember that `id` was deleted here, so the deletion reaches the other environments. */
-    readonly recordTombstone: (id: string) => Effect.Effect<void, PrismSyncFailedError>;
+    readonly recordTombstone: (id: string) => Effect.Effect<void, PrismSyncError>;
   }
 >()("t3/fork/prism/PrismSync/PrismSyncService") {}
 
@@ -258,6 +259,16 @@ const make = Effect.gen(function* () {
   yield* Effect.addFinalizer(() => Scope.close(runScope, Exit.void));
 
   const section = flags.config.pipe(Effect.map((forkConfig) => forkConfig.prism?.sync));
+  const legacySyncEnabled = (values: ForkFlagValues) => values.prism && !values["mic-identity"];
+  // Retained legacy configuration and secrets do not confer sync authority once
+  // q1code is an identity-backed client of the independent Prism service.
+  const requireLegacySync = flags.current.pipe(
+    Effect.filterOrFail(
+      legacySyncEnabled,
+      () => new PrismSyncNotConfigured({ message: "Legacy Prism sync is disabled." }),
+    ),
+    Effect.asVoid,
+  );
 
   /** Store first, environment second; an empty value in either counts as absent. */
   const readSecret = (storeName: string, envName: string) =>
@@ -274,6 +285,7 @@ const make = Effect.gen(function* () {
     });
 
   const resolve = Effect.gen(function* () {
+    yield* requireLegacySync;
     const sync = yield* section;
     if (sync === undefined) {
       return yield* new PrismSyncNotConfigured({ message: "fork.json has no prism.sync" });
@@ -297,6 +309,7 @@ const make = Effect.gen(function* () {
       tokenSecretName: sync.tokenSecretName ?? PRISM_SYNC_DEFAULT_TOKEN_SECRET_NAME,
       interval: Duration.seconds(sync.intervalSeconds ?? PRISM_SYNC_DEFAULT_INTERVAL_SECONDS),
     };
+    yield* requireLegacySync;
     return resolved;
   });
 
@@ -349,6 +362,7 @@ const make = Effect.gen(function* () {
   // comparison is exact on both sides.
   const writeEntry = (id: string, bytes: Uint8Array, updatedAt: string) =>
     Effect.gen(function* () {
+      yield* requireLegacySync;
       const authsDir = yield* currentAuthsDir;
       const target = path.join(authsDir, id);
       const temp = path.join(authsDir, `.sync-${id}.tmp`);
@@ -357,17 +371,29 @@ const make = Effect.gen(function* () {
       yield* fs.makeDirectory(authsDir, { recursive: true });
       yield* fs.writeFile(temp, bytes, { mode: 0o600 });
       yield* fs.chmod(temp, 0o600);
+      yield* requireLegacySync;
       yield* fs.rename(temp, target);
+      yield* requireLegacySync;
       yield* fs.utimes(target, stampSeconds, stampSeconds);
-    }).pipe(Effect.mapError(ioError(`write ${id}`)));
+    }).pipe(
+      Effect.mapError((error) =>
+        error._tag === "PrismSyncNotConfigured" ? error : ioError(`write ${id}`)(error),
+      ),
+    );
 
   const removeEntry = (id: string) =>
     currentAuthsDir.pipe(
-      Effect.flatMap((authsDir) => fs.remove(path.join(authsDir, id))),
-      Effect.catch((error) =>
-        error.reason._tag === "NotFound" ? Effect.void : Effect.fail(error),
+      Effect.flatMap((authsDir) =>
+        requireLegacySync.pipe(Effect.andThen(fs.remove(path.join(authsDir, id)))),
       ),
-      Effect.mapError(ioError(`remove ${id}`)),
+      Effect.catch((error) =>
+        error._tag !== "PrismSyncNotConfigured" && error.reason._tag === "NotFound"
+          ? Effect.void
+          : Effect.fail(error),
+      ),
+      Effect.mapError((error) =>
+        error._tag === "PrismSyncNotConfigured" ? error : ioError(`remove ${id}`)(error),
+      ),
     );
 
   /** Expired tombstones are dropped on read, so nothing depends on a separate sweep. */
@@ -395,17 +421,24 @@ const make = Effect.gen(function* () {
 
   const writeTombstones = (tombstones: ReadonlyArray<SyncTombstone>) =>
     Effect.gen(function* () {
+      yield* requireLegacySync;
       const temp = path.join(rootDir, ".tombstones.json.tmp");
       const contents = `${encodeTombstoneFile(
         Object.fromEntries(tombstones.map((tombstone) => [tombstone.id, tombstone.deletedAt])),
       )}\n`;
       yield* fs.makeDirectory(rootDir, { recursive: true });
       yield* fs.writeFileString(temp, contents);
+      yield* requireLegacySync;
       yield* fs.rename(temp, tombstonesPath);
-    }).pipe(Effect.mapError(ioError("write tombstones")));
+    }).pipe(
+      Effect.mapError((error) =>
+        error._tag === "PrismSyncNotConfigured" ? error : ioError("write tombstones")(error),
+      ),
+    );
 
   const recordTombstone = (id: string) =>
     Effect.gen(function* () {
+      yield* requireLegacySync;
       const known = yield* readTombstones;
       const deletedAt = yield* nowIso;
       const merged = planSyncMerge(
@@ -435,6 +468,7 @@ const make = Effect.gen(function* () {
     const entries = yield* Effect.forEach(local, (stamp) => readEntry(resolved.key, stamp));
     const tombstones = yield* readTombstones;
     const primaryEnvironmentId = yield* identity.getEnvironmentId;
+    yield* requireLegacySync;
     return {
       version: 3,
       generatedAt: yield* nowIso,
@@ -461,6 +495,9 @@ const make = Effect.gen(function* () {
     });
 
   const status = Effect.gen(function* () {
+    if (!legacySyncEnabled(yield* flags.current)) {
+      return { role: "standalone" } satisfies PrismSyncStatus;
+    }
     const sync = yield* section;
     const last = yield* Ref.get(lastSyncRef);
     return {
@@ -488,6 +525,7 @@ const make = Effect.gen(function* () {
       }
       const target = { primaryUrl: resolved.primaryUrl, token: resolved.token };
       const bundle = yield* transport.fetchExport(target);
+      yield* requireLegacySync;
       if (bundle.version !== 3) {
         return yield* new PrismSyncNotConfigured({
           message:
@@ -565,8 +603,8 @@ const make = Effect.gen(function* () {
     if (Option.isSome(fiber)) yield* Fiber.interrupt(fiber.value);
   });
 
-  const apply = (values: { readonly prism: boolean }) =>
-    lifecycle.withPermits(1)(values.prism ? start : stop);
+  const apply = (values: ForkFlagValues) =>
+    lifecycle.withPermits(1)(legacySyncEnabled(values) ? start : stop);
 
   yield* apply(yield* flags.current);
   yield* flags.changes.pipe(
