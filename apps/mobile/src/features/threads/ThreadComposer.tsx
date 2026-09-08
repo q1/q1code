@@ -64,7 +64,10 @@ import { groupByProvider } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
-import { MicPrismModelStatus, useMicPrismComposerModels } from "../../fork/prism/MicPrismAvailability"; // fork: prism
+import {
+  MicPrismModelStatus,
+  useMicPrismComposerModels,
+} from "../../fork/prism/MicPrismAvailability"; // fork: prism
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
@@ -317,7 +320,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const { modelOptions, modelUnavailable } = useMicPrismComposerModels(
-    props.serverConfig, currentModelSelection, props.connectionState === "connected",
+    props.serverConfig,
+    currentModelSelection,
+    props.connectionState === "connected",
   ); // fork: prism
   const connectionStatus = composerConnectionStatus({
     connectionError: props.connectionError,
@@ -792,7 +797,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       <MicPrismModelStatus
                         config={props.serverConfig}
                         selection={currentModelSelection}
-                      /> {/* fork: prism */}
+                      />{" "}
+                      {/* fork: prism */}
                     </View>
                   </View>
                 )}

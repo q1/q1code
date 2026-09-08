@@ -1,6 +1,9 @@
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
-import { FORK_BASE_SETTINGS_SEARCH_ITEMS, FORK_PRISM_SETTINGS_SEARCH_ITEMS } from "../../fork/forkSettingsSearch"; // fork: prism
+import {
+  FORK_BASE_SETTINGS_SEARCH_ITEMS,
+  FORK_PRISM_SETTINGS_SEARCH_ITEMS,
+} from "../../fork/forkSettingsSearch"; // fork: prism
 
 export type SettingsPath =
   | "/settings/general"
