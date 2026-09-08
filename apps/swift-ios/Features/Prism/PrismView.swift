@@ -6,7 +6,7 @@ public struct PrismView: View {
     private let client: any FeatureClient
     private let environments: [FeatureEnvironment]
     private let threads: [FeatureThread]
-    @Environment(\.scenePhase) private var scenePhase
+    @SwiftUI.Environment(\.scenePhase) private var scenePhase
     @State private var environmentID = ""
     @State private var status: PrismResponse?
     @State private var session: AuthSessionState?
