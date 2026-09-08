@@ -9,7 +9,11 @@ import {
   type MicIdentityClientInput,
 } from "@t3tools/client-runtime/fork";
 import type { ModelSelection, ServerConfig } from "@t3tools/contracts";
-import type { ModelOption } from "../../lib/modelOptions";
+import {
+  buildModelOptions,
+  isModelSelectionUnavailable,
+  type ModelOption,
+} from "../../lib/modelOptions";
 import { runtime } from "../../lib/runtime";
 import { AppText as Text } from "../../components/AppText";
 
@@ -91,6 +95,36 @@ export function useMicPrismModelOptions(
     () => applyMicPrismModelAvailability(config, options, selection, observation),
     [config, options, selection, observation],
   );
+}
+
+/** Keep catalog construction and observed availability outside the composer body. */
+export function useMicPrismComposerModels(
+  config: ServerConfig | null | undefined,
+  selection: ModelSelection,
+  connected: boolean,
+) {
+  const catalog = useMemo(() => buildModelOptions(config, selection), [config, selection]);
+  const modelOptions = useMicPrismModelOptions(config, catalog, selection);
+  const modelUnavailable =
+    connected &&
+    (isModelSelectionUnavailable(config, selection) ||
+      modelOptions.find(
+        (option) =>
+          option.selection.instanceId === selection.instanceId &&
+          option.selection.model === selection.model,
+      )?.isUnavailable === true);
+  return { modelOptions, modelUnavailable };
+}
+
+export function useMicPrismNewTaskModelOptions(
+  config: ServerConfig | null | undefined,
+  draftSelection: ModelSelection | null,
+  projectSelection: ModelSelection | null,
+  stickySelection: ModelSelection | null,
+) {
+  const selection = draftSelection ?? projectSelection ?? stickySelection;
+  const catalog = useMemo(() => buildModelOptions(config, selection), [config, selection]);
+  return useMicPrismModelOptions(config, catalog, selection);
 }
 
 export function MicPrismModelStatus(props: {

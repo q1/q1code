@@ -10,6 +10,7 @@ import { defineConfig, type Connect, type Plugin } from "vite-plus";
 import pkg from "./package.json" with { type: "json" };
 
 import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
+import { withBrowserIdentityProxy } from "./src/fork/browserIdentityProxy"; // fork: prism
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { tailwindPlugins } from "./vite/tailwind";
@@ -234,20 +235,16 @@ export default defineConfig(() => {
             // Vite's HMR socket is matched separately and exactly (path "/"
             // plus a vite-hmr subprotocol), so the upgrade handlers don't
             // collide.
-            proxy: {
-              // fork: mic-identity — preserve the browser origin for relay cookie binding.
-              "/api/fork/prism/identity/browser": { target: devProxyTarget, changeOrigin: false },
-              ...Object.fromEntries(
-                DEV_PROXIED_PATH_PREFIXES.map((prefix) => [
-                  prefix,
-                  {
-                    target: devProxyTarget,
-                    changeOrigin: true,
-                    ...(prefix === "/ws" || prefix === "/api" ? { ws: true } : {}),
-                  },
-                ]),
-              ),
-            },
+            proxy: withBrowserIdentityProxy(devProxyTarget, Object.fromEntries( // fork: prism
+              DEV_PROXIED_PATH_PREFIXES.map((prefix) => [
+                prefix,
+                {
+                  target: devProxyTarget,
+                  changeOrigin: true,
+                  ...(prefix === "/ws" || prefix === "/api" ? { ws: true } : {}),
+                },
+              ]),
+            )),
           }
         : {}),
       // Electron's BrowserWindow needs the HMR socket pinned to an explicit

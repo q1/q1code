@@ -174,7 +174,7 @@ import {
 import { measureRestingComposerControls } from "./restingComposerControlsMeasurement";
 import { observeResponsiveBreakpointFade, usePanelAnimationSettings } from "../../panelAnimations";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
-import { MicPrismProviderModelPicker } from "../../fork/mic-identity/MicPrismProviderModelPicker"; // fork: prism
+import { ForkSlot } from "../../fork/ForkSlot"; // fork: prism
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -4121,9 +4121,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           data-resting-controls-separator="true"
         />
       ) : null}
-      <MicPrismProviderModelPicker
-        environmentId={environmentId}
-        routeOptions={composerModelOptions}
+      <ForkSlot name="chat-model-picker" context={{ environmentId, routeOptions: composerModelOptions }} // fork: prism
         isComposerOwned
         disabled={providerCatalogPending}
         activeInstanceId={

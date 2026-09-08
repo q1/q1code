@@ -14,6 +14,15 @@ import type {
   SettingsSearchItemId,
 } from "~/components/settings/settingsSearch";
 
+export const FORK_BASE_SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "q1code-feature-flags",
+    title: "q1code feature flags",
+    to: "/settings/general",
+    searchTerms: ["fork flags T3FORK fork.json update-check prism"],
+  },
+] as const satisfies ReadonlyArray<SettingsSearchItem>;
+
 /** Sections of the Prism tab, in page order. */
 export const FORK_PRISM_SETTINGS_SEARCH_ITEMS = [
   {

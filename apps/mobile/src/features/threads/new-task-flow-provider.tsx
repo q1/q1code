@@ -29,13 +29,12 @@ import { useEnvironmentServerConfig, useProjects, useThreadShells } from "../../
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
-import { isMicPrismModel, useMicPrismModelOptions } from "../../fork/prism/MicPrismAvailability";
+import { useMicPrismNewTaskModelOptions } from "../../fork/prism/MicPrismAvailability"; // fork: prism
+import { resolveMicPrismSelectableModelSelection as resolveSelectableModelSelection } from "../../fork/prism/micPrismModelOptions.logic"; // fork: prism
 import {
-  buildModelOptions,
   groupByProvider,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
-  resolveSelectableModelSelection,
 } from "../../lib/modelOptions";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -458,15 +457,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model. Other providers retain their fallback
   // rules. Implicit defaults also exclude legacy models for those providers.
-  const draftModelSelection = isMicPrismModel(
+  const draftModelSelection = resolveSelectableModelSelection(
     selectedEnvironmentServerConfig,
-    selectedProjectDraft.modelSelection,
-  )
-    ? selectedProjectDraft.modelSelection!
-    : resolveSelectableModelSelection(
-        selectedEnvironmentServerConfig,
-        selectedProjectDraft.modelSelection ?? null,
-      );
+    selectedProjectDraft.modelSelection ?? null,
+  );
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     selectedProject?.defaultModelSelection ??
@@ -478,24 +472,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig,
     storedStickyModelSelection,
   );
-  const catalogOptions = useMemo(
-    () =>
-      buildModelOptions(
-        selectedEnvironmentServerConfig,
-        draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
-      ),
-    [
-      selectedEnvironmentServerConfig,
-      draftModelSelection,
-      projectDefaultModelSelection,
-      stickyModelSelection,
-    ],
-  );
-  const modelOptions = useMicPrismModelOptions(
-    selectedEnvironmentServerConfig,
-    catalogOptions,
-    draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
-  );
+  const modelOptions = useMicPrismNewTaskModelOptions(
+    selectedEnvironmentServerConfig, draftModelSelection, projectDefaultModelSelection, stickyModelSelection,
+  ); // fork: prism
 
   // An unsent draft keeps its explicit pick. Fresh drafts resolve the project
   // default before the last manual app-wide selection and provider default.
