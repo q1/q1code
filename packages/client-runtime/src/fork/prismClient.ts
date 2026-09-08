@@ -266,7 +266,11 @@ export const connectMicPrismThread = (input: PrismClientInput & { readonly threa
     const token = input.micScToken ? yield* resolveMicIdentityToken(input.micScToken) : undefined;
     const delegated = token?.startsWith("q1br_")
       ? input.micIdentity
-        ? yield* mintMicPrismCredential(input.micIdentity)
+        ? yield* mintMicPrismCredential(input.micIdentity).pipe(
+            Effect.catchTag("MicPrismInferenceError", () =>
+              Effect.fail(new MicIdentityUnavailableError({ reason: "transport" })),
+            ),
+          )
         : yield* new MicIdentityUnavailableError({ reason: "configuration" })
       : undefined;
     const { micScToken: _token, ...environmentInput } = input;

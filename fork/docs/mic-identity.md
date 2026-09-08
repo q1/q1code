@@ -17,10 +17,14 @@ Configure the public authority URL and Clerk publishable key in the environment'
 }
 ```
 
-Open Prism and select **Sign in to mic.sc**. This uses normal Clerk session
-tokens, so signing out or revoking a session can end its Prism access. An existing
-Clerk configuration must use the same publishable key. A mismatch is shown rather
-than replacing the client's existing account.
+Open Prism and select **Sign in to mic.sc**. In a browser served by your coding
+environment, approve sign-in on `https://prism.mic.sc/browser-login` and return to
+q1code. Keep that environment connected; restarting its server requires signing
+in again. The sign-in popup displays the q1code origin you are approving.
+
+Desktop and native clients use their Clerk SDK session. Signing out or revoking
+the mic.sc session ends its Prism access. An existing Clerk configuration must use
+the same publishable key; a mismatch is shown before connecting.
 
 Hosted web clients can sign in before pairing an environment. Configure the
 hosted build with `VITE_T3FORK_MIC_IDENTITY=true`, `VITE_MIC_SC_AUTHORITY_URL`
