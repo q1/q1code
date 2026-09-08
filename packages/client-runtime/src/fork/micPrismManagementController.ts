@@ -10,6 +10,7 @@ import type {
 } from "@q1code/core/micPrismApi";
 import type { MicPrismPermission } from "@q1code/core/micIdentity";
 import type * as Crypto from "effect/Crypto";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import type { HttpClient } from "effect/unstable/http";
 import type { MicIdentityClientInput } from "./micIdentityClient.ts";
@@ -92,7 +93,7 @@ export function createMicPrismManagementController(options: {
     controller = new AbortController();
     emit({ loading: true });
     try {
-      const values = await options.run(
+      const { values, receivedAt } = await options.run(
         Effect.all(
           {
             accounts: allowed("prism:accounts:read")
@@ -112,6 +113,9 @@ export function createMicPrismManagementController(options: {
                 : Effect.succeed(null),
           },
           { concurrency: "unbounded" },
+        ).pipe(
+          Effect.bindTo("values"),
+          Effect.bind("receivedAt", () => Clock.currentTimeMillis),
         ),
         controller.signal,
       );
@@ -131,7 +135,7 @@ export function createMicPrismManagementController(options: {
           values.loginStatus?._tag === "Success" ? values.loginStatus.success : state.loginStatus,
         error: failures.length > 0 ? message(failures[0]!.failure) : null,
         loading: false,
-        receivedAt: failures.length === 0 ? Date.now() : state.receivedAt,
+        receivedAt: failures.length === 0 ? receivedAt : state.receivedAt,
       });
     } catch (error) {
       if (valid(ticket)) emit({ loading: false, error: message(error) });
