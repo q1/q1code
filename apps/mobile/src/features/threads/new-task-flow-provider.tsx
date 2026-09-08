@@ -29,6 +29,7 @@ import { useEnvironmentServerConfig, useProjects, useThreadShells } from "../../
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
+import { isMicPrismModel, useMicPrismModelOptions } from "../../fork/prism/MicPrismAvailability";
 import {
   buildModelOptions,
   groupByProvider,
@@ -420,7 +421,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model. Other providers retain their fallback
   // rules. Implicit defaults also exclude legacy models for those providers.
-  const draftModelSelection = resolveSelectableModelSelection(
+  const draftModelSelection = isMicPrismModel(selectedEnvironmentServerConfig, selectedProjectDraft.modelSelection) ? selectedProjectDraft.modelSelection! : resolveSelectableModelSelection(
     selectedEnvironmentServerConfig,
     selectedProjectDraft.modelSelection ?? null,
   );
@@ -433,7 +434,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig,
     storedStickyModelSelection,
   );
-  const modelOptions = useMemo(
+  const catalogOptions = useMemo(
     () =>
       buildModelOptions(
         selectedEnvironmentServerConfig,
@@ -446,6 +447,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       stickyModelSelection,
     ],
   );
+  const modelOptions = useMicPrismModelOptions(selectedEnvironmentServerConfig, catalogOptions, draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection);
 
   // An unsent draft keeps its explicit pick. Fresh drafts resolve the project
   // default before the last manual app-wide selection and provider default.

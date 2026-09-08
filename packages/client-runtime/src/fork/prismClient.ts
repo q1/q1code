@@ -59,6 +59,7 @@ import {
   type MicIdentityClientError,
 } from "@q1code/core/micIdentity";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Option from "effect/Option";
 import { FetchHttpClient, Headers, type HttpClient, type HttpMethod } from "effect/unstable/http";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
@@ -247,14 +248,24 @@ export const getPrismIdentityAccess = (
   );
 
 export const connectMicPrismThread = (input: PrismClientInput & { readonly threadId: string }) =>
-  call(
-    input,
-    "PUT",
-    "connectIdentityThread",
-    (client, headers) =>
-      client.prism.connectIdentityThread({ headers, params: { threadId: input.threadId } }),
-    { threadId: input.threadId },
-  );
+  Effect.gen(function* () {
+    const receipt = yield* call(
+      input,
+      "PUT",
+      "connectIdentityThread",
+      (client, headers) =>
+        client.prism.connectIdentityThread({ headers, params: { threadId: input.threadId } }),
+      { threadId: input.threadId },
+    );
+    const now = yield* Clock.currentTimeMillis;
+    if (
+      receipt.threadId !== input.threadId ||
+      receipt.expiresAt <= now ||
+      receipt.expiresAt > now + 930_000
+    )
+      return yield* new MicIdentityUnavailableError({ reason: "transport" });
+    return receipt;
+  });
 
 export const disconnectMicPrismThread = (
   input: PrismClientInput & { readonly threadId: string },

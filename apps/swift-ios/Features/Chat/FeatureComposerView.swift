@@ -21,11 +21,14 @@ struct FeatureComposerView: View {
     @State private var textRevision: UInt64 = 0
     @State private var textObservation = FeatureComposerTextObservation()
     @State private var voiceInputController = FeatureVoiceInputController()
+    @State private var prismModels = MicPrismCodingModels()
     @Binding private var text: String
     @Binding private var selection: FeatureSelection?
     @Binding private var attachments: [FeatureDraftAttachment]
 
     private let providers: [FeatureProvider]
+    private let prismClient: (any FeatureClient)?
+    private let prismEnvironment: FeatureEnvironment?
     private let draftOwnerID: String
     private let environmentID: String?
     private let draftStorageKey: String?
@@ -77,7 +80,9 @@ struct FeatureComposerView: View {
         onDismissKeyboard: (() -> Void)? = nil,
         onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)? = nil,
         onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)? = nil,
-        onRefreshModels: (() async throws -> Void)? = nil
+        onRefreshModels: (() async throws -> Void)? = nil,
+        prismClient: (any FeatureClient)? = nil,
+        prismEnvironment: FeatureEnvironment? = nil
     ) {
         _text = text
         _selection = selection
@@ -90,6 +95,8 @@ struct FeatureComposerView: View {
         self.attachmentPreferences = attachmentPreferences
         self.onRefreshModels = onRefreshModels
         self.providers = providers
+        self.prismClient = prismClient
+        self.prismEnvironment = prismEnvironment
         self.threadSelection = threadSelection
         self.materializesDefaultSelection = materializesDefaultSelection
         self.isSending = isSending
@@ -110,6 +117,11 @@ struct FeatureComposerView: View {
 
     var body: some View {
         composerSurface
+            .task(id: (environmentID ?? "") + ":" + prismIdentityID + ":" + String(describing: scenePhase)) {
+                guard scenePhase == .active, prismEnvironment?.prismEnabled == true,
+                      let prismClient, let environmentID else { return }
+                await prismModels.observe(client: prismClient, environmentID: environmentID, identityID: prismIdentityID)
+            }
             .overlay(alignment: .top) {
                 if showsCommandMenu, let trigger = composerTrigger {
                     // Offset by the menu's deterministic height so it sits
@@ -384,11 +396,19 @@ struct FeatureComposerView: View {
                 style: .compact,
                 threadSelection: threadSelection,
                 materializesDefaultSelection: materializesDefaultSelection,
+                preservesSelection: prismPreservesSelection,
+                getModelDisabledReason: prismEnvironment?.prismEnabled == true ? { providerID, modelID in
+                    prismModels.reason(providerID: providerID, modelID: modelID, providers: providers, selection: selection ?? threadSelection)
+                } : nil,
                 onRefresh: onRefreshModels,
                 onPresentationChange: handleModelPickerPresentation
             )
             .frame(maxWidth: 220, alignment: .leading)
             .layoutPriority(2)
+
+            if let prismClient, let prismEnvironment, prismEnvironment.prismEnabled == true {
+                MicPrismCodingStatus(client: prismClient, environment: prismEnvironment, observation: prismModels, providers: providers, selection: selection ?? threadSelection)
+            }
 
             Spacer(minLength: 0)
 
@@ -561,6 +581,8 @@ struct FeatureComposerView: View {
 
     private var canSend: Bool {
         guard composerTrigger?.kind != .model else { return false }
+        if prismEnvironment?.prismEnabled == true, let selected = selection ?? threadSelection,
+           prismModels.reason(providerID: selected.providerID, modelID: selected.modelID, providers: providers, selection: selected) != nil { return false }
         return FeatureComposerSubmissionEligibility.canSend(
             text: text,
             attachmentCount: attachments.count,
@@ -571,6 +593,16 @@ struct FeatureComposerView: View {
             isSending: isSending,
             preparationState: attachmentPreparation
         ) && !uploadsBlockSend
+    }
+
+    private var prismIdentityID: String {
+        (prismClient as? any T3ConnectCapable)?.t3ConnectController.account?.id ?? "signed-out"
+    }
+
+    private var prismPreservesSelection: Bool {
+        guard prismEnvironment?.prismEnabled == true, prismModels.identityEnabled != false,
+              let selected = selection ?? threadSelection else { return false }
+        return MicPrismCodingModels.isPooled(providerID: selected.providerID, providers: providers, selection: selected)
     }
 
     private var imagesAllowed: Bool {

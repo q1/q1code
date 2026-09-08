@@ -3,6 +3,7 @@ export * from "./micIdentityClient.ts";
 export * from "./micPrismClient.ts";
 export * from "./micPrismManagement.ts";
 export * from "./micPrismManagementController.ts";
+export * from "./micPrismThreadOperations.ts";
 export * from "./micPrismInference.ts";
 export * from "./micPrismPairing.ts";
 export * from "./micPrismPairingController.ts";

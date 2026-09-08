@@ -116,7 +116,9 @@ public struct NewThreadView: View {
                         forceExpanded: true,
                         powerFeatures: composerPowerFeatures,
                         onDismissKeyboard: { promptFocused = false },
-                        onRefreshModels: refreshSelectedEnvironmentModels
+                        onRefreshModels: refreshSelectedEnvironmentModels,
+                        prismClient: model.client,
+                        prismEnvironment: model.snapshot.environments.first { $0.id == selectedProject?.environmentID }
                     )
                 }
                 .background(T3Colors.background)
