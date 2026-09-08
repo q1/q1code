@@ -6,7 +6,7 @@ const ORIGIN = "http://localhost:54321",
   AUTHORITY = "https://identity.mic.sc";
 const now = () => Math.floor(performance.timeOrigin + performance.now());
 const token = "msc1.11111111-1111-4111-8111-111111111111." + "A".repeat(43);
-function fixture() {
+function fixture(exchangeGate?: () => Promise<void>) {
   const calls: { url: string; init?: RequestInit }[] = [];
   let revoked = false,
     offline = false;
@@ -14,13 +14,15 @@ function fixture() {
     const url = String(input);
     calls.push({ url, ...(init ? { init } : {}) });
     if (offline) throw new Error("offline");
-    if (url.endsWith("/exchange"))
+    if (url.endsWith("/exchange")) {
+      await exchangeGate?.();
       return Response.json({
         version: 1,
         tokenType: "PrismClient",
         token,
         expiresAt: now() + 60_000,
       });
+    }
     if (url.endsWith("/revoke")) {
       revoked = true;
       return Response.json({ revoked: true });
@@ -114,6 +116,28 @@ function fixture() {
   };
 }
 describe("browser identity relay", () => {
+  it("revokes a grant issued after logout wins the exchange race", async () => {
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const paused = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const f = fixture(async () => {
+      entered();
+      await paused;
+    });
+    const values = await f.start();
+    const completing = f.call("complete", values);
+    await started;
+    expect((await f.call("revoke")).status).toBe(200);
+    release();
+    expect((await completing).status).toBe(401);
+    const revocation = f.calls.find((call) => call.url.endsWith("/cli/revoke"));
+    expect(new Headers(revocation?.init?.headers).get("x-prism-client")).toBe(token);
+    expect(await (await f.call("status")).json()).toEqual({ generation: null });
+  });
   it("exchanges PKCE once and returns only a nonsecret handle", async () => {
     const f = fixture(),
       values = await f.login();
