@@ -4121,7 +4121,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           data-resting-controls-separator="true"
         />
       ) : null}
-      <ForkSlot name="chat-model-picker" context={{ environmentId, routeOptions: composerModelOptions }} // fork: prism
+      <ForkSlot
+        name="chat-model-picker"
+        context={{ environmentId, routeOptions: composerModelOptions }} // fork: prism
         isComposerOwned
         disabled={providerCatalogPending}
         activeInstanceId={

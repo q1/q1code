@@ -473,7 +473,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     storedStickyModelSelection,
   );
   const modelOptions = useMicPrismNewTaskModelOptions(
-    selectedEnvironmentServerConfig, draftModelSelection, projectDefaultModelSelection, stickyModelSelection,
+    selectedEnvironmentServerConfig,
+    draftModelSelection,
+    projectDefaultModelSelection,
+    stickyModelSelection,
   ); // fork: prism
 
   // An unsent draft keeps its explicit pick. Fresh drafts resolve the project

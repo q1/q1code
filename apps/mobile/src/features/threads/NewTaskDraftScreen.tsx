@@ -1365,7 +1365,8 @@ export function NewTaskDraftScreen(props: {
                     <MicPrismModelStatus
                       config={selectedEnvironmentServerConfig}
                       selection={flow.selectedModel}
-                    /> {/* fork: prism */}
+                    />{" "}
+                    {/* fork: prism */}
                     {flow.planModeEnabled ? (
                       <ComposerInlineControl
                         accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
