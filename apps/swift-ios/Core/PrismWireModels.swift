@@ -8,6 +8,48 @@ public struct PrismAccount: Decodable, Identifiable, Sendable {
     public let disabled: Bool
     public let weight: Int?
     public let lifecycle: PrismAccountLifecycle?
+    public let reservePercent: Double?
+    public let quotaWindows: [MicPrismQuotaWindow]?
+    public let eligibility: MicPrismAccountEligibility?
+}
+
+public struct MicPrismQuotaWindow: Decodable, Sendable, Identifiable {
+    public let id: String
+    public let utilization: Double
+    public let observedAt: String
+    public let resetAt: String?
+}
+
+public struct MicPrismAccountEligibility: Decodable, Sendable {
+    public let available: Bool
+    public let reason: String?
+}
+
+public struct MicPrismPoolSettings: Codable, Sendable, Equatable {
+    public var strategy: String
+    public var sessionAffinity: Bool
+    public var requestRetry: Int
+    public var maxRetryInterval: Int
+
+    public static let strategies = ["round-robin", "weighted-round-robin", "fill-first", "reset-priority"]
+    public var valid: Bool {
+        Self.strategies.contains(strategy) && (0...10).contains(requestRetry) && (0...300).contains(maxRetryInterval)
+    }
+    public var json: JSONValue { .object([
+        "strategy": .string(strategy), "sessionAffinity": .bool(sessionAffinity),
+        "requestRetry": .number(Double(requestRetry)), "maxRetryInterval": .number(Double(maxRetryInterval)),
+    ]) }
+}
+
+public struct MicPrismModelAvailability: Decodable, Sendable, Identifiable {
+    public let id: String
+    public let provider: String
+    public let available: Bool
+    public let usableAccounts: Int
+    public let warnings: [String]
+    public let reason: String?
+    public let nextEligibleAt: String?
+    public var summary: String { "\(available ? "Available" : "Unavailable") · \(usableAccounts) usable account\(usableAccounts == 1 ? "" : "s")" }
 }
 
 public struct PrismAccountLifecycle: Decodable, Sendable {
@@ -47,6 +89,11 @@ public struct PrismResponse: Decodable, Sendable {
     public let selectionRevision: Int?
     public let threadId: String?
     public let expiresAt: Double?
+    public let settingsRevision: String?
+    public let operationId: String?
+    public let settings: MicPrismPoolSettings?
+    public let modelAvailability: [MicPrismModelAvailability]?
+    public let observedAt: String?
 }
 
 public struct MicPrismIdentityConfiguration: Decodable, Sendable {

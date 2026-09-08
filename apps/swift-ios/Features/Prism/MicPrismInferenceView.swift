@@ -7,7 +7,8 @@ struct MicPrismInferenceView: View {
     let enabled: Bool
     let service: MicPrismDiscoveredService
     let authorityUrl: String?
-    @State private var models: [String] = []
+    @State private var models: [MicPrismModelAvailability] = []
+    @State private var availabilityError: String?
     @State private var model = ""
     @State private var prompt = ""
     @State private var response = ""
@@ -16,13 +17,17 @@ struct MicPrismInferenceView: View {
     @State private var request: Task<Void, Never>?
     @State private var requestGeneration = 0
 
+    private var selected: MicPrismModelAvailability? { models.first { $0.id == model } }
+    private var canSend: Bool { selected?.available == true && availabilityError == nil }
+
     var body: some View {
         Section("Try a model") {
-            Text("Send a prompt through your paired Prism service. Listed models may be unavailable when provider capacity changes.")
+            Text(availabilityError ?? selected?.summary ?? "Choose a configured model. Prism verifies eligibility for every request.")
                 .foregroundStyle(.secondary)
             Picker("Model", selection: $model) {
                 if model.isEmpty { Text("Models unavailable").tag("") }
-                ForEach(models, id: \.self) { Text($0).tag($0) }
+                if !model.isEmpty && selected == nil { Text(model + " — unavailable").tag(model) }
+                ForEach(models) { value in Text(value.id + (value.available ? "" : " — unavailable")).tag(value.id).disabled(!value.available) }
             }.disabled(!enabled || request != nil || loadingModels)
             Button(loadingModels ? "Loading models…" : "Refresh models") { Task { await loadModels() } }
                 .disabled(!enabled || request != nil || loadingModels)
@@ -35,7 +40,7 @@ struct MicPrismInferenceView: View {
                 Button("Cancel request", role: .cancel) { cancel() }
             } else {
                 Button("Send to Prism") { send() }
-                    .disabled(!enabled || model.isEmpty || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || prompt.count > 8000)
+                    .disabled(!enabled || !canSend || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || prompt.count > 8000)
             }
             if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
             if !response.isEmpty { Text(response).textSelection(.enabled) }
@@ -49,17 +54,17 @@ struct MicPrismInferenceView: View {
         loadingModels = true
         defer { loadingModels = false }
         do {
-            let result = try await client.prism(PrismRequest("/models", expectedService: service, identityAuthorityUrl: authorityUrl), environmentID: environmentID)
+            let result = try await client.prism(PrismRequest("/availability", expectedService: service, identityAuthorityUrl: authorityUrl), environmentID: environmentID)
             guard !Task.isCancelled else { return }
-            models = result.models ?? []
-            if !models.contains(model) { model = models.first ?? "" }
-            errorMessage = models.isEmpty ? "No models are listed by this Prism service." : nil
+            models = result.modelAvailability ?? []
+            if model.isEmpty { model = models.first(where: { $0.available })?.id ?? models.first?.id ?? "" }
+            availabilityError = nil
         } catch is CancellationError { }
-        catch { report(error) }
+        catch { availabilityError = (error as? MicPrismError)?.localizedDescription ?? "Model availability could not be checked. Refresh before sending." }
     }
 
     @MainActor private func send() {
-        guard enabled, request == nil, !model.isEmpty, !prompt.isEmpty, prompt.count <= 8000 else { return }
+        guard enabled, request == nil, canSend, !prompt.isEmpty, prompt.count <= 8000 else { return }
         response = ""; errorMessage = nil
         requestGeneration += 1
         let generation = requestGeneration

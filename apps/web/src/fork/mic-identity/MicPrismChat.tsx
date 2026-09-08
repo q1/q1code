@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowUpIcon, SquareIcon, RefreshCwIcon } from "lucide-react";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { listMicPrismModels, streamMicPrismChat } from "@t3tools/client-runtime/fork";
+import { describeMicPrismAvailability, describeMicPrismWarning, streamMicPrismChat } from "@t3tools/client-runtime/fork";
 import type { MicPrismService } from "@q1code/core/micIdentity";
 import { Button } from "~/components/ui/button";
 import { runtime } from "~/lib/runtime";
 import { micIdentityGeneration, readMicIdentityToken } from "./micIdentitySession";
+import { useMicPrismAvailability } from "./useMicPrismAvailability";
 
 /** A service-only conversation; no environment, files or provider credentials are required. */
 export function MicPrismChat({
@@ -20,12 +21,10 @@ export function MicPrismChat({
   generation: number;
   disabled: boolean;
 }) {
-  const [models, setModels] = useState<readonly string[]>([]);
   const [model, setModel] = useState("");
   const [prompt, setPrompt] = useState("");
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [revision, setRevision] = useState(0);
   const active = useRef<AbortController | null>(null);
@@ -36,53 +35,21 @@ export function MicPrismChat({
     isCurrent: () => micIdentityGeneration() === generation,
   });
 
+  const availability = useMicPrismAvailability({ authorityUrl, service, generation, disabled, revision });
+  const models = availability.value?.models ?? [];
+  const loading = availability.loading;
+  const selected = models.find((entry) => entry.id === model);
+  const canSend = selected?.available === true && availability.error === null;
   useEffect(() => {
-    const controller = new AbortController();
-    void runtime
-      .runPromise(
-        listMicPrismModels({
-          baseUrl: authorityUrl,
-          expectedService: service,
-          getToken: readMicIdentityToken,
-          isCurrent: () => micIdentityGeneration() === generation,
-        }).pipe(Effect.result),
-        { signal: controller.signal },
-      )
-      .then((result) => {
-        if (controller.signal.aborted) return;
-        setLoading(false);
-        if (result._tag === "Failure") {
-          setModels([]);
-          setError(result.failure.message);
-        } else {
-          setModels(result.success);
-          setModel((selected) => selected || result.success[0] || "");
-          setError(null);
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-          setError("Model discovery failed. Try again.");
-        }
-      });
-    return () => controller.abort();
-  }, [
-    authorityUrl,
-    generation,
-    revision,
-    service.id,
-    service.pairingRevision,
-    service.apiUrl,
-    service.inferenceUrl,
-  ]);
+    if (availability.value) setModel((selected) => selected || availability.value!.models.find((entry) => entry.available)?.id || availability.value!.models[0]?.id || "");
+  }, [availability.value]);
   useEffect(() => () => active.current?.abort(), []);
   useEffect(() => {
     if (disabled) active.current?.abort();
   }, [disabled]);
 
   const send = async () => {
-    if (disabled || loading || active.current || !models.includes(model) || !prompt.trim()) return;
+    if (disabled || loading || active.current || !canSend || !prompt.trim()) return;
     const controller = new AbortController();
     active.current = controller;
     setRunning(true);
@@ -141,12 +108,12 @@ export function MicPrismChat({
             {!model ? (
               <option value="">{loading ? "Loading models…" : "No models listed"}</option>
             ) : null}
-            {model && !models.includes(model) ? (
+            {model && !selected ? (
               <option value={model}>{model} — unavailable</option>
             ) : null}
-            {models.map((id) => (
-              <option key={id} value={id}>
-                {id}
+            {models.map((entry) => (
+              <option key={entry.id} value={entry.id} disabled={!entry.available}>
+                {entry.id}{entry.available ? "" : " — unavailable"}
               </option>
             ))}
           </select>
@@ -156,7 +123,6 @@ export function MicPrismChat({
             aria-label="Refresh models"
             disabled={disabled || running || loading}
             onClick={() => {
-              setLoading(true);
               setRevision((n) => n + 1);
             }}
           >
@@ -166,9 +132,9 @@ export function MicPrismChat({
       </div>
       <div className="space-y-4 p-5">
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Models are listed by the service. Capacity and usable account counts are not reported yet;
-          Prism checks each request.
+          {availability.error ?? (selected ? describeMicPrismAvailability(selected) : "Choose a configured model. Prism checks eligibility for each request.")}
         </p>
+        {selected?.warnings.map((warning) => <p key={warning} className="text-xs text-muted-foreground">{describeMicPrismWarning(warning)}</p>)}
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -210,7 +176,7 @@ export function MicPrismChat({
               <Button
                 key="send"
                 type="submit"
-                disabled={disabled || loading || !models.includes(model) || !prompt.trim()}
+                disabled={disabled || loading || !canSend || !prompt.trim()}
               >
                 <ArrowUpIcon className="size-4" />
                 Send

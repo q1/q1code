@@ -35,9 +35,15 @@ environment. Native sign-in then persists while navigating the application.
 The Prism page shows your selected host and offers a one-off prompt. Choose a
 model, send your prompt and stop the response when needed. This conversation is
 not saved in q1code. The model catalogue is not a guarantee of available quota;
-Prism checks each request. Model eligibility, usable account counts and warnings
-still require a compatible aggregate API. Ordinary users do not receive account
-labels, emails or per-account quota details.
+Prism checks each request. Model availability shows the usable account count and
+warnings for that model. Unavailable models stay visible, and existing selections
+are preserved. A failed availability check retains the last observation and
+pauses new requests until it can be refreshed. Ordinary users do not receive
+account labels, emails or per-account quota details.
+
+The web and desktop coding model picker applies the same eligibility to pooled
+Claude/Codex routes. Its Prism indicator expands to model warnings; the direct
+provider option keeps the environment's independent credentials and settings.
 
 ## Connect a coding thread
 
@@ -84,11 +90,27 @@ before trying again. Expired challenges must be replaced; changes are never
 replayed automatically. The current host helper does not yet automate signing a challenge issued
 by this UI; host-side proof preparation is still required.
 
-The merged gateway currently supports routing management, not remote account
-onboarding, reserves or advanced settings. These controls remain unavailable.
-Routing writes also need a future server-side settings-revision contract for
-atomic stale-write rejection; clients currently bind the observed host and check
-acknowledgment/readback.
+In Prism settings on web, desktop and native clients, administrators can add or
+reconnect Claude, ChatGPT/Codex and Grok subscriptions on the selected host.
+Complete its provider browser or device flow; remote redirect flows accept the
+completed callback URL. A saved login is distinct from verified authentication
+and usable quota, which remain visible in account health and model availability.
+
+Account controls include enable/disable, removal, weight and soft reserve.
+Clearing the reserve turns avoidance off; the host supplies the default 3% for
+accounts without an override. Pool settings include reset priority and the other
+supported selection strategies. Advanced settings control session affinity,
+extra retry rounds and maximum retry interval. Account eligibility and reserves
+continue to apply regardless of those settings.
+
+Each change is bound to the observed host and settings revision. Prism must
+confirm its operation receipt and applied values. A conflicting edit asks you to
+refresh and review the current state; failed changes are never queued or retried
+automatically. Offline screens retain last-known values with editing disabled.
+The independent gateway must support the revisioned accounts/settings and model
+availability adapters; older gateways report an unsupported operation without
+falling back to shared management credentials. These adapters do not expose
+provider tokens or grant q1code environment access.
 
 Turning `mic-identity` off restores legacy Prism behavior when `prism` is enabled.
 A production migration must separately fence external provider processes that

@@ -515,6 +515,7 @@ export const PRISM_ROUTING_OPTIONS: ReadonlyArray<{
 }> = [
   { value: "round-robin", label: "Round robin" },
   { value: "weighted-round-robin", label: "Weighted" },
+  { value: "reset-priority", label: "Reset priority" },
   { value: "fill-first", label: "Fill first" },
 ];
 
