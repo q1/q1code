@@ -23,7 +23,10 @@ const StateBinding = { ...Binding, settingsRevision: Revision };
 
 /** The independent service supports reset priority in addition to the legacy strategies. */
 export const MicPrismStrategy = Schema.Literals([
-  "round-robin", "weighted-round-robin", "fill-first", "reset-priority",
+  "round-robin",
+  "weighted-round-robin",
+  "fill-first",
+  "reset-priority",
 ]);
 export type MicPrismStrategy = typeof MicPrismStrategy.Type;
 
@@ -41,20 +44,27 @@ export const MicPrismManagedAccount = Schema.Struct({
   ...PrismAccount.fields,
   /** Null explicitly disables reserve avoidance; the gateway supplies its 3% default. */
   reservePercent: Schema.NullOr(Percent),
-  quotaWindows: Schema.optionalKey(Schema.Array(Schema.Struct({
-    id: Identifier,
-    utilization: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
-    resetAt: Schema.optionalKey(Schema.String),
-    observedAt: Schema.String,
-  }))),
-  eligibility: Schema.optionalKey(Schema.Struct({
-    available: Schema.Boolean,
-    reason: Schema.optionalKey(Schema.String),
-  })),
+  quotaWindows: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        id: Identifier,
+        utilization: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+        resetAt: Schema.optionalKey(Schema.String),
+        observedAt: Schema.String,
+      }),
+    ),
+  ),
+  eligibility: Schema.optionalKey(
+    Schema.Struct({
+      available: Schema.Boolean,
+      reason: Schema.optionalKey(Schema.String),
+    }),
+  ),
 });
 export type MicPrismManagedAccount = typeof MicPrismManagedAccount.Type;
 export const MicPrismAccountsState = Schema.Struct({
-  ...StateBinding, accounts: Schema.Array(MicPrismManagedAccount),
+  ...StateBinding,
+  accounts: Schema.Array(MicPrismManagedAccount),
 });
 export type MicPrismAccountsState = typeof MicPrismAccountsState.Type;
 
@@ -117,16 +127,20 @@ export const MicPrismAvailability = Schema.Struct({
 export type MicPrismAvailability = typeof MicPrismAvailability.Type;
 
 export const MicPrismSettingsWrite = Schema.Struct({
-  ...MicPrismOperation.fields, settings: MicPrismSettings,
+  ...MicPrismOperation.fields,
+  settings: MicPrismSettings,
 });
 export const MicPrismAccountWrite = Schema.Struct({
-  ...MicPrismOperation.fields, patch: MicPrismAccountPatch,
+  ...MicPrismOperation.fields,
+  patch: MicPrismAccountPatch,
 });
 export const MicPrismLoginWrite = Schema.Struct({
-  ...MicPrismOperation.fields, provider: MicPrismLoginProvider,
+  ...MicPrismOperation.fields,
+  provider: MicPrismLoginProvider,
 });
 export const MicPrismCallbackWrite = Schema.Struct({
-  ...MicPrismOperation.fields, redirectUrl: Schema.String.check(Schema.isNonEmpty()),
+  ...MicPrismOperation.fields,
+  redirectUrl: Schema.String.check(Schema.isNonEmpty()),
 });
 export { PrismAccountId as MicPrismAccountId };
 

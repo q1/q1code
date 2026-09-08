@@ -236,49 +236,51 @@ const readAuths = Effect.gen(function* () {
 const KEY = "shared-secret";
 
 it.layer(NodeServices.layer, { excludeTestServices: true })("PrismSync", (it) => {
-  it.effect("identity clients and disabled Prism leave retained primary and replica sync idle", () =>
-    Effect.gen(function* () {
-      for (const enabledFlags of [
-        { prism: true, "mic-identity": true },
-        { prism: false, "mic-identity": false },
-      ]) {
-        for (const role of ["primary", "replica"] as const) {
-          let tickerStarts = 0;
-          const node = makeNode({
-            id: `disabled-${role}-${enabledFlags.prism}`,
-            config: {
-              flags: enabledFlags,
-              prism: { sync: { role, primaryUrl: "http://primary" } },
-            },
-            env: { Q1CODE_PRISM_SYNC_KEY: KEY, Q1CODE_PRISM_SYNC_TOKEN: "token" },
-            transport: noTransport,
-            ticker: () => {
-              tickerStarts++;
-              return Stream.empty;
-            },
-          });
-          yield* Effect.gen(function* () {
-            const service = yield* PrismSyncService;
-            yield* writeAuth("kept.json", '{"access_token":"test-kept"}', T0);
-            for (const operation of [
-              service.exportBundle,
-              service.applyPush([]),
-              service.syncNow,
-              service.recordTombstone("kept.json"),
-            ]) {
-              const result = yield* operation.pipe(Effect.flip);
-              assert.equal(result._tag, "PrismSyncNotConfigured");
-              assert.equal(result.message, "Legacy Prism sync is disabled.");
-            }
-            yield* Effect.yieldNow;
-            assert.equal(tickerStarts, 0);
-            assert.deepEqual(yield* service.status, { role: "standalone" });
-            assert.deepEqual(yield* readAuths, { "kept.json": '{"access_token":"test-kept"}' });
-            assert.isNull(yield* readTombstoneFile);
-          }).pipe(Effect.provide(node));
+  it.effect(
+    "identity clients and disabled Prism leave retained primary and replica sync idle",
+    () =>
+      Effect.gen(function* () {
+        for (const enabledFlags of [
+          { prism: true, "mic-identity": true },
+          { prism: false, "mic-identity": false },
+        ]) {
+          for (const role of ["primary", "replica"] as const) {
+            let tickerStarts = 0;
+            const node = makeNode({
+              id: `disabled-${role}-${enabledFlags.prism}`,
+              config: {
+                flags: enabledFlags,
+                prism: { sync: { role, primaryUrl: "http://primary" } },
+              },
+              env: { Q1CODE_PRISM_SYNC_KEY: KEY, Q1CODE_PRISM_SYNC_TOKEN: "token" },
+              transport: noTransport,
+              ticker: () => {
+                tickerStarts++;
+                return Stream.empty;
+              },
+            });
+            yield* Effect.gen(function* () {
+              const service = yield* PrismSyncService;
+              yield* writeAuth("kept.json", '{"access_token":"test-kept"}', T0);
+              for (const operation of [
+                service.exportBundle,
+                service.applyPush([]),
+                service.syncNow,
+                service.recordTombstone("kept.json"),
+              ]) {
+                const result = yield* operation.pipe(Effect.flip);
+                assert.equal(result._tag, "PrismSyncNotConfigured");
+                assert.equal(result.message, "Legacy Prism sync is disabled.");
+              }
+              yield* Effect.yieldNow;
+              assert.equal(tickerStarts, 0);
+              assert.deepEqual(yield* service.status, { role: "standalone" });
+              assert.deepEqual(yield* readAuths, { "kept.json": '{"access_token":"test-kept"}' });
+              assert.isNull(yield* readTombstoneFile);
+            }).pipe(Effect.provide(node));
+          }
         }
-      }
-    }),
+      }),
   );
 
   it.effect("a pending replica fetch cannot write after mic-identity is enabled", () =>
@@ -301,28 +303,35 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("PrismSync", (it) =>
         id: "identity-during-fetch",
         config,
         env: { Q1CODE_PRISM_SYNC_KEY: KEY, Q1CODE_PRISM_SYNC_TOKEN: "token" },
-        flags: Layer.succeed(ForkFlagsService, ForkFlagsService.of({
-          current: Ref.get(values),
-          reload: Ref.get(values),
-          changes: Stream.empty,
-          config: Effect.succeed(config),
-          update: () => Effect.die("unexpected fork.json update"),
-        })),
-        ticker: () => Stream.empty,
-        transport: Layer.succeed(PrismSyncTransport, PrismSyncTransport.of({
-          fetchExport: () => Effect.gen(function* () {
-            yield* Deferred.succeed(fetchStarted, undefined);
-            yield* Deferred.await(releaseFetch);
-            return {
-              version: 3,
-              generatedAt: T2,
-              primaryEnvironmentId: "primary",
-              entries: [{ id: "new.json", updatedAt: T1, ciphertext }],
-              tombstones: [{ id: "kept.json", deletedAt: T1 }],
-            };
+        flags: Layer.succeed(
+          ForkFlagsService,
+          ForkFlagsService.of({
+            current: Ref.get(values),
+            reload: Ref.get(values),
+            changes: Stream.empty,
+            config: Effect.succeed(config),
+            update: () => Effect.die("unexpected fork.json update"),
           }),
-          push: () => Effect.die("unexpected push"),
-        })),
+        ),
+        ticker: () => Stream.empty,
+        transport: Layer.succeed(
+          PrismSyncTransport,
+          PrismSyncTransport.of({
+            fetchExport: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(fetchStarted, undefined);
+                yield* Deferred.await(releaseFetch);
+                return {
+                  version: 3,
+                  generatedAt: T2,
+                  primaryEnvironmentId: "primary",
+                  entries: [{ id: "new.json", updatedAt: T1, ciphertext }],
+                  tombstones: [{ id: "kept.json", deletedAt: T1 }],
+                };
+              }),
+            push: () => Effect.die("unexpected push"),
+          }),
+        ),
       });
       yield* Effect.gen(function* () {
         const service = yield* PrismSyncService;

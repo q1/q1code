@@ -81,7 +81,8 @@ export function MicIdentityPanel() {
             const gateway = yield* Effect.gen(function* () {
               if (access.session.permissions.includes("prism:inference"))
                 yield* getMicPrismStatus(bound);
-              return access.session.permissions.includes("prism:routing:read") && !access.session.permissions.includes("prism:settings:read")
+              return access.session.permissions.includes("prism:routing:read") &&
+                !access.session.permissions.includes("prism:settings:read")
                 ? (yield* getMicPrismRouting(bound)).strategy
                 : null;
             }).pipe(Effect.result);
@@ -303,7 +304,8 @@ export function MicIdentityPanel() {
                       if (
                         value === "round-robin" ||
                         value === "weighted-round-robin" ||
-                        value === "fill-first" || value === "reset-priority"
+                        value === "fill-first" ||
+                        value === "reset-priority"
                       )
                         void changeRouting(value);
                     }}

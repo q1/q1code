@@ -1362,7 +1362,10 @@ export function NewTaskDraftScreen(props: {
                         onPress={settingsSheetPresentation.open}
                       />
                     </View>
-                    <MicPrismModelStatus config={selectedEnvironmentServerConfig} selection={flow.selectedModel} />
+                    <MicPrismModelStatus
+                      config={selectedEnvironmentServerConfig}
+                      selection={flow.selectedModel}
+                    />
                     {flow.planModeEnabled ? (
                       <ComposerInlineControl
                         accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}

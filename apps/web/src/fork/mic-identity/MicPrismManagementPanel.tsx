@@ -160,9 +160,7 @@ export function MicPrismManagementPanel(props: {
                 revision={state.accounts!.settingsRevision}
                 observedAt={state.receivedAt}
                 disabled={!accountsWritable}
-                onSave={(patch, revision) =>
-                  controller.patchAccount(account.id, patch, revision)
-                }
+                onSave={(patch, revision) => controller.patchAccount(account.id, patch, revision)}
                 onRemove={() => void remove(account, state.accounts!.settingsRevision)}
               />
             ))}

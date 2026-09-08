@@ -9,10 +9,18 @@ import { micIdentityGeneration, readMicIdentityToken } from "./micIdentitySessio
 
 /** Availability is an observation; errors preserve the last model selection and stop new requests. */
 export function useMicPrismAvailability(input: {
-  authorityUrl: string; service?: MicPrismService; generation: number; disabled: boolean; revision?: number;
+  authorityUrl: string;
+  service?: MicPrismService;
+  generation: number;
+  disabled: boolean;
+  revision?: number;
 }) {
   const visible = useDocumentVisible();
-  const [state, setState] = useState<{ value: MicPrismAvailability | null; error: string | null; loading: boolean }>({ value: null, error: null, loading: true });
+  const [state, setState] = useState<{
+    value: MicPrismAvailability | null;
+    error: string | null;
+    loading: boolean;
+  }>({ value: null, error: null, loading: true });
   useEffect(() => {
     if (!visible || input.disabled) return;
     const controller = new AbortController();
@@ -21,20 +29,48 @@ export function useMicPrismAvailability(input: {
       if (loading) return;
       loading = true;
       try {
-        const result = await runtime.runPromise(getMicPrismAvailability({
-          baseUrl: input.authorityUrl, ...(input.service ? { expectedService: input.service } : {}), getToken: readMicIdentityToken,
-          isCurrent: () => micIdentityGeneration() === input.generation,
-        }).pipe(Effect.result), { signal: controller.signal });
+        const result = await runtime.runPromise(
+          getMicPrismAvailability({
+            baseUrl: input.authorityUrl,
+            ...(input.service ? { expectedService: input.service } : {}),
+            getToken: readMicIdentityToken,
+            isCurrent: () => micIdentityGeneration() === input.generation,
+          }).pipe(Effect.result),
+          { signal: controller.signal },
+        );
         if (controller.signal.aborted) return;
-        setState((previous) => result._tag === "Success" ? { value: result.success, error: null, loading: false }
-          : { ...previous, error: result.failure.message, loading: false });
+        setState((previous) =>
+          result._tag === "Success"
+            ? { value: result.success, error: null, loading: false }
+            : { ...previous, error: result.failure.message, loading: false },
+        );
       } catch {
-        if (!controller.signal.aborted) setState((previous) => ({ ...previous, loading: false, error: "Model availability could not be checked. Refresh before sending a request." }));
-      } finally { loading = false; }
+        if (!controller.signal.aborted)
+          setState((previous) => ({
+            ...previous,
+            loading: false,
+            error: "Model availability could not be checked. Refresh before sending a request.",
+          }));
+      } finally {
+        loading = false;
+      }
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 10_000);
-    return () => { controller.abort(); window.clearInterval(timer); };
-  }, [input.authorityUrl, input.service?.id, input.service?.pairingRevision, input.service?.apiUrl, input.service?.inferenceUrl, input.generation, input.disabled, input.revision, visible]);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [
+    input.authorityUrl,
+    input.service?.id,
+    input.service?.pairingRevision,
+    input.service?.apiUrl,
+    input.service?.inferenceUrl,
+    input.generation,
+    input.disabled,
+    input.revision,
+    visible,
+  ]);
   return state;
 }

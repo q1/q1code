@@ -458,10 +458,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model. Other providers retain their fallback
   // rules. Implicit defaults also exclude legacy models for those providers.
-  const draftModelSelection = isMicPrismModel(selectedEnvironmentServerConfig, selectedProjectDraft.modelSelection) ? selectedProjectDraft.modelSelection! : resolveSelectableModelSelection(
+  const draftModelSelection = isMicPrismModel(
     selectedEnvironmentServerConfig,
-    selectedProjectDraft.modelSelection ?? null,
-  );
+    selectedProjectDraft.modelSelection,
+  )
+    ? selectedProjectDraft.modelSelection!
+    : resolveSelectableModelSelection(
+        selectedEnvironmentServerConfig,
+        selectedProjectDraft.modelSelection ?? null,
+      );
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     selectedProject?.defaultModelSelection ??
@@ -486,7 +491,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       stickyModelSelection,
     ],
   );
-  const modelOptions = useMicPrismModelOptions(selectedEnvironmentServerConfig, catalogOptions, draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection);
+  const modelOptions = useMicPrismModelOptions(
+    selectedEnvironmentServerConfig,
+    catalogOptions,
+    draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
+  );
 
   // An unsent draft keeps its explicit pick. Fresh drafts resolve the project
   // default before the last manual app-wide selection and provider default.

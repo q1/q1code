@@ -145,7 +145,8 @@ export function createMicPrismManagementController(options: {
       notice: "Confirmed by Prism.",
     }),
   ) => {
-    if (!isCurrent() || !allowed(permission) || state.busy || state.loading || state.error) return false;
+    if (!isCurrent() || !allowed(permission) || state.busy || state.loading || state.error)
+      return false;
     const ticket = ++sequence;
     controller?.abort();
     controller = new AbortController();

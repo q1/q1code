@@ -74,7 +74,10 @@ import {
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
-import { MicPrismModelStatus, useMicPrismModelOptions } from "../../fork/prism/MicPrismAvailability";
+import {
+  MicPrismModelStatus,
+  useMicPrismModelOptions,
+} from "../../fork/prism/MicPrismAvailability";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
@@ -310,7 +313,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     () => buildModelOptions(props.serverConfig, currentModelSelection),
     [props.serverConfig, currentModelSelection],
   );
-  const modelOptions = useMicPrismModelOptions(props.serverConfig, catalogOptions, currentModelSelection);
+  const modelOptions = useMicPrismModelOptions(
+    props.serverConfig,
+    catalogOptions,
+    currentModelSelection,
+  );
   const modelUnavailable =
     props.connectionState === "connected" &&
     (isModelSelectionUnavailable(props.serverConfig, currentModelSelection) ||
@@ -820,7 +827,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                         maxWidth="100%"
                         onPress={openSettings}
                       />
-                      <MicPrismModelStatus config={props.serverConfig} selection={currentModelSelection} />
+                      <MicPrismModelStatus
+                        config={props.serverConfig}
+                        selection={currentModelSelection}
+                      />
                     </View>
                   </View>
                 )}
