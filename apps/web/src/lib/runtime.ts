@@ -1,4 +1,4 @@
-import { browserIdentityFetch } from "../fork/mic-identity/browserIdentityRelay";
+import { browserIdentityFetch } from "../fork/mic-identity/browserIdentityRelay"; // fork: prism
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

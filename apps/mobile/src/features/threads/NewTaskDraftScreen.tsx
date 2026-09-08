@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { MicPrismModelStatus } from "../../fork/prism/MicPrismAvailability";
+import { MicPrismModelStatus } from "../../fork/prism/MicPrismAvailability"; // fork: prism
 import {
   CommonActions,
   StackActions,
@@ -1344,7 +1344,7 @@ export function NewTaskDraftScreen(props: {
                     <MicPrismModelStatus
                       config={selectedEnvironmentServerConfig}
                       selection={flow.selectedModel}
-                    />
+                    /> {/* fork: prism */}
                     {flow.planModeEnabled ? (
                       <ComposerInlineControl
                         accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}

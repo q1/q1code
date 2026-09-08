@@ -60,18 +60,11 @@ import type {
   DraftComposerAttachment,
   DraftComposerFileAttachment,
 } from "../../lib/composerImages";
-import {
-  buildModelOptions,
-  groupByProvider,
-  isModelSelectionUnavailable,
-} from "../../lib/modelOptions";
+import { groupByProvider } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
-import {
-  MicPrismModelStatus,
-  useMicPrismModelOptions,
-} from "../../fork/prism/MicPrismAvailability";
+import { MicPrismModelStatus, useMicPrismComposerModels } from "../../fork/prism/MicPrismAvailability"; // fork: prism
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
@@ -323,23 +316,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.connectionState !== "connected" || props.queueCount > 0 ? "Queue" : "Send";
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
-  const catalogOptions = useMemo(
-    () => buildModelOptions(props.serverConfig, currentModelSelection),
-    [props.serverConfig, currentModelSelection],
-  );
-  const modelOptions = useMicPrismModelOptions(
-    props.serverConfig,
-    catalogOptions,
-    currentModelSelection,
-  );
-  const modelUnavailable =
-    props.connectionState === "connected" &&
-    (isModelSelectionUnavailable(props.serverConfig, currentModelSelection) ||
-      modelOptions.find(
-        (option) =>
-          option.selection.instanceId === currentModelSelection.instanceId &&
-          option.selection.model === currentModelSelection.model,
-      )?.isUnavailable === true);
+  const { modelOptions, modelUnavailable } = useMicPrismComposerModels(
+    props.serverConfig, currentModelSelection, props.connectionState === "connected",
+  ); // fork: prism
   const connectionStatus = composerConnectionStatus({
     connectionError: props.connectionError,
     connectionState: props.connectionState,
@@ -813,7 +792,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       <MicPrismModelStatus
                         config={props.serverConfig}
                         selection={currentModelSelection}
-                      />
+                      /> {/* fork: prism */}
                     </View>
                   </View>
                 )}

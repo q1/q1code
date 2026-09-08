@@ -26,7 +26,7 @@ import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
-import { browserIdentityRoutesLayer } from "./fork/mic-identity/BrowserIdentityHttp.ts";
+import { browserIdentityRoutesLayer } from "./fork/mic-identity/BrowserIdentityHttp.ts"; // fork: prism
 import { prismRoutesLayer } from "./fork/prism/PrismHttpApi.ts"; // fork: prism
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -542,7 +542,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     prismRoutesLayer, // fork: prism
-    browserIdentityRoutesLayer,
+    browserIdentityRoutesLayer, // fork: prism
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,

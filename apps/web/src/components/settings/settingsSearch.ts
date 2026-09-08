@@ -1,6 +1,6 @@
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
-import { FORK_PRISM_SETTINGS_SEARCH_ITEMS } from "../../fork/forkSettingsSearch"; // fork: prism
+import { FORK_BASE_SETTINGS_SEARCH_ITEMS, FORK_PRISM_SETTINGS_SEARCH_ITEMS } from "../../fork/forkSettingsSearch"; // fork: prism
 
 export type SettingsPath =
   | "/settings/general"
@@ -315,12 +315,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["project thread tree old flat list"],
   },
-  {
-    id: "q1code-feature-flags",
-    title: "q1code feature flags",
-    to: "/settings/general",
-    searchTerms: ["fork flags T3FORK fork.json update-check prism"],
-  }, // fork: base
+  ...FORK_BASE_SETTINGS_SEARCH_ITEMS, // fork: base
   ...FORK_PRISM_SETTINGS_SEARCH_ITEMS, // fork: prism
   {
     id: "keybindings",

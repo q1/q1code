@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { releaseChecksumsUrl, releaseTarballName, releaseTarballUrl } from "@q1code/core/brand";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -31,3 +32,9 @@ export function releaseDownloaderTestLayer(
     },
   });
 }
+
+/** Shared installation fixture keeps upstream tests in their original suite shape. */
+export const forkPinnedRuntimeTestLayer = Layer.merge(
+  NodeServices.layer,
+  releaseDownloaderTestLayer("1.2.3"),
+);
