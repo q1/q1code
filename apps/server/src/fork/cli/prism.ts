@@ -225,7 +225,7 @@ const resolveGateway = (flags: CliAuthLocationFlags) =>
   );
 
 /** The gateway answered, but not with 200. */
-class GatewayRejected extends Schema.TaggedErrorClass<GatewayRejected>()("GatewayRejected", {
+class GatewayRejected extends Schema.TaggedError<GatewayRejected>()("GatewayRejected", {
   message: Schema.String,
 }) {}
 

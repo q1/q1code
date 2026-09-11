@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId, type ModelSelection, type ServerConfig } from "@t3tools/contracts";
-import { buildModelOptions, resolveNewTaskModelSelection } from "../../lib/modelOptions";
-import { applyMicPrismModelAvailability } from "./micPrismModelOptions.logic";
+import {
+  buildModelOptions,
+  resolveNewTaskModelSelection,
+  resolveSelectableModelSelection,
+} from "../../lib/modelOptions";
+import {
+  applyMicPrismModelAvailability,
+  resolveMicPrismSelectableModelSelection,
+} from "./micPrismModelOptions.logic";
 
 const config = {
   environment: { capabilities: { forkFlags: { prism: true, "mic-identity": true } } },
@@ -40,6 +47,47 @@ const observation = (available: boolean) => ({
 });
 
 describe("Prism coding model eligibility", () => {
+  it("retains the pooled draft when local provider authentication disappears", () => {
+    const signedOut = {
+      ...config,
+      providers: config.providers.map((provider) => ({
+        ...provider,
+        auth: { status: "unauthenticated" as const },
+      })),
+    };
+    expect(resolveSelectableModelSelection(signedOut, selection)).toBeNull();
+    expect(resolveMicPrismSelectableModelSelection(signedOut, selection)).toBe(selection);
+    const options = applyMicPrismModelAvailability(
+      signedOut,
+      buildModelOptions(signedOut, selection),
+      selection,
+      observation(false),
+    );
+    expect(
+      options.find((option) => option.selection.model === selection.model)?.isUnavailable,
+    ).toBe(true);
+  });
+
+  it("preserves upstream selection and catalog behavior with both fork flags off", () => {
+    const disabled = {
+      ...config,
+      environment: {
+        ...config.environment,
+        capabilities: {
+          ...config.environment.capabilities,
+          forkFlags: { prism: false, "mic-identity": false },
+        },
+      },
+    };
+    const options = buildModelOptions(disabled, selection);
+    expect(
+      applyMicPrismModelAvailability(disabled, options, selection, observation(false)),
+    ).toEqual(options);
+    expect(resolveMicPrismSelectableModelSelection(disabled, selection)).toEqual(
+      resolveSelectableModelSelection(disabled, selection),
+    );
+  });
+
   it("keeps an unavailable draft selected while disabling its picker row", () => {
     const options = applyMicPrismModelAvailability(
       config,

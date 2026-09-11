@@ -282,7 +282,7 @@ export const PrismUnavailableReason = Schema.Literals([
 export type PrismUnavailableReason = typeof PrismUnavailableReason.Type;
 
 /** 503: the flag is off, the sidecar is not ready, or sync is not configured for this role. */
-export class PrismUnavailableError extends Schema.TaggedErrorClass<PrismUnavailableError>()(
+export class PrismUnavailableError extends Schema.TaggedError<PrismUnavailableError>()(
   "PrismUnavailableError",
   {
     reason: PrismUnavailableReason,
@@ -300,7 +300,7 @@ export class PrismUnavailableError extends Schema.TaggedErrorClass<PrismUnavaila
 }
 
 /** 502: the sidecar answered with an error or could not be reached. `status` is the sidecar's. */
-export class PrismUpstreamError extends Schema.TaggedErrorClass<PrismUpstreamError>()(
+export class PrismUpstreamError extends Schema.TaggedError<PrismUpstreamError>()(
   "PrismUpstreamError",
   {
     status: Schema.Number,
@@ -314,7 +314,7 @@ export class PrismUpstreamError extends Schema.TaggedErrorClass<PrismUpstreamErr
 }
 
 /** 404: no auth file or login session with that id. */
-export class PrismNotFoundError extends Schema.TaggedErrorClass<PrismNotFoundError>()(
+export class PrismNotFoundError extends Schema.TaggedError<PrismNotFoundError>()(
   "PrismNotFoundError",
   {
     id: Schema.String,
@@ -331,7 +331,7 @@ export class PrismNotFoundError extends Schema.TaggedErrorClass<PrismNotFoundErr
 }
 
 /** 500: a change the sidecar accepted could not be persisted into `fork.json`, so it would not survive a restart. */
-export class PrismConfigError extends Schema.TaggedErrorClass<PrismConfigError>()(
+export class PrismConfigError extends Schema.TaggedError<PrismConfigError>()(
   "PrismConfigError",
   {
     message: Schema.String,
@@ -347,7 +347,7 @@ export const PrismSyncFailureReason = Schema.Literals(["crypto", "io", "transpor
 export type PrismSyncFailureReason = typeof PrismSyncFailureReason.Type;
 
 /** 500: a sync export, push, or pull could not complete. Never carries plaintext or keys. */
-export class PrismSyncFailedError extends Schema.TaggedErrorClass<PrismSyncFailedError>()(
+export class PrismSyncFailedError extends Schema.TaggedError<PrismSyncFailedError>()(
   "PrismSyncFailedError",
   {
     reason: PrismSyncFailureReason,

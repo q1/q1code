@@ -18,7 +18,7 @@ const HKDF_INFO = "auth-file-v1";
 /** An opaque 32-byte AES key. Keep it out of logs and error messages. */
 export type SyncKey = Uint8Array & { readonly __brand: "PrismSyncKey" };
 
-export class PrismSyncCryptoError extends Schema.TaggedErrorClass<PrismSyncCryptoError>()(
+export class PrismSyncCryptoError extends Schema.TaggedError<PrismSyncCryptoError>()(
   "PrismSyncCryptoError",
   {
     operation: Schema.Literals(["encrypt", "decrypt"]),

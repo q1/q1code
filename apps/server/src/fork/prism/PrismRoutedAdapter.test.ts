@@ -111,6 +111,99 @@ const observe = Effect.fn("test.observe")(function* (
 });
 
 it.layer(NodeServices.layer)("Prism routed adapter", (it) => {
+  for (const route of ["prism", "direct", "flag-off"] as const) {
+    it.effect(`routes native compaction to the active ${route} session`, () =>
+      Effect.gen(function* () {
+        const direct = yield* fake("direct");
+        const proxy = yield* fake("proxy");
+        const calls: Array<{ name: string; selection: ProviderSendTurnInput["modelSelection"] }> =
+          [];
+        const native = (name: string, base: typeof direct.adapter) => ({
+          ...base,
+          compaction: {
+            type: "native" as const,
+            start: (id: ThreadId, selection?: ProviderSendTurnInput["modelSelection"]) =>
+              Effect.gen(function* () {
+                assert.isTrue(yield* base.hasSession(id));
+                calls.push({ name, selection });
+              }),
+          },
+        });
+        const adapter = yield* makePrismRoutedAdapter({
+          direct: native("direct", direct.adapter),
+          enabled: () => route !== "flag-off",
+          proxy: () => Effect.succeed(native("proxy", proxy.adapter)),
+        });
+        const selection = {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "test-model",
+          options: [
+            { id: PRISM_ROUTE_OPTION, value: route === "direct" ? "direct" : "prism" },
+            { id: "reasoning", value: "high" },
+          ],
+        };
+        yield* adapter.startSession({ ...start, modelSelection: selection });
+        if (adapter.compaction?.type !== "native") throw new Error("Missing native compaction");
+        yield* adapter.compaction.start(threadId, selection);
+        assert.deepEqual(calls, [
+          {
+            name: route === "prism" ? "proxy" : "direct",
+            selection: { ...selection, options: [{ id: "reasoning", value: "high" }] },
+          },
+        ]);
+      }),
+    );
+  }
+
+  it.effect("preserves slash-command and unsupported compaction declarations", () =>
+    Effect.gen(function* () {
+      const direct = yield* fake("direct");
+      for (const base of [
+        direct.adapter,
+        {
+          ...direct.adapter,
+          compaction: { type: "slash-command" as const, command: "/compact" as const },
+        },
+      ]) {
+        const adapter = yield* makePrismRoutedAdapter({
+          direct: base,
+          enabled: () => true,
+          proxy: () => Effect.succeed(undefined),
+        });
+        assert.deepEqual(adapter.compaction, base.compaction);
+      }
+    }),
+  );
+
+  it.effect(
+    "fails native compaction without falling back when the routed capability is missing",
+    () =>
+      Effect.gen(function* () {
+        const direct = yield* fake("direct");
+        const proxy = yield* fake("proxy");
+        let directCalls = 0;
+        const adapter = yield* makePrismRoutedAdapter({
+          direct: {
+            ...direct.adapter,
+            compaction: {
+              type: "native",
+              start: () =>
+                Effect.sync(() => {
+                  directCalls++;
+                }),
+            },
+          },
+          enabled: () => true,
+          proxy: () => Effect.succeed(proxy.adapter),
+        });
+        yield* adapter.startSession(start);
+        if (adapter.compaction?.type !== "native") throw new Error("Missing native compaction");
+        const error = yield* adapter.compaction.start(threadId).pipe(Effect.flip);
+        assert.equal(error._tag, "ProviderAdapterValidationError");
+        assert.equal(directCalls, 0);
+      }),
+  );
+
   it.effect("legacy startup fallback survives the failed proxy's exit event", () =>
     Effect.gen(function* () {
       const direct = yield* fake("direct");

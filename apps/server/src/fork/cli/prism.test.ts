@@ -105,7 +105,14 @@ const runCli = (
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
-        NetService.layer,
+        // CLI setup resolves ports, but this fixture uses only the scripted HTTP client.
+        Layer.succeed(NetService.NetService, {
+          canListenOnHost: () => Effect.succeed(true),
+          isPortAvailableOnLoopback: () => Effect.succeed(true),
+          hasListenerOnHost: () => Effect.succeed(false),
+          reserveLoopbackPort: () => Effect.succeed(18317),
+          findAvailablePort: (preferred) => Effect.succeed(preferred),
+        }),
         TestConsole.layer,
         (options.gateway ?? makeGateway(() => "refuse")).layer,
         Layer.succeed(ForkFlagsEnvironment, options.env ?? {}),

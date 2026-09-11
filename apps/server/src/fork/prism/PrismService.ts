@@ -93,7 +93,7 @@ export interface PrismStatus {
   readonly usageSource: boolean;
 }
 
-export class PrismSpawnError extends Schema.TaggedErrorClass<PrismSpawnError>()("PrismSpawnError", {
+export class PrismSpawnError extends Schema.TaggedError<PrismSpawnError>()("PrismSpawnError", {
   path: Schema.String,
   cause: Schema.Defect(),
 }) {
@@ -102,7 +102,7 @@ export class PrismSpawnError extends Schema.TaggedErrorClass<PrismSpawnError>()(
   }
 }
 
-export class PrismNotReady extends Schema.TaggedErrorClass<PrismNotReady>()("PrismNotReady", {
+export class PrismNotReady extends Schema.TaggedError<PrismNotReady>()("PrismNotReady", {
   port: Schema.Number,
   stage: Schema.Literals(["tcp", "management"]),
 }) {
@@ -112,19 +112,16 @@ export class PrismNotReady extends Schema.TaggedErrorClass<PrismNotReady>()("Pri
 }
 
 /** One management probe against an external proxy failed; `detail` is transport or HTTP text with the secret redacted. */
-export class PrismProbeFailed extends Schema.TaggedErrorClass<PrismProbeFailed>()(
-  "PrismProbeFailed",
-  {
-    baseUrl: Schema.String,
-    detail: Schema.String,
-  },
-) {
+export class PrismProbeFailed extends Schema.TaggedError<PrismProbeFailed>()("PrismProbeFailed", {
+  baseUrl: Schema.String,
+  detail: Schema.String,
+}) {
   override get message(): string {
     return `CLIProxyAPI at ${this.baseUrl} did not answer the management probe: ${this.detail}`;
   }
 }
 
-export class PrismExited extends Schema.TaggedErrorClass<PrismExited>()("PrismExited", {
+export class PrismExited extends Schema.TaggedError<PrismExited>()("PrismExited", {
   code: Schema.Number,
 }) {
   override get message(): string {
@@ -132,19 +129,16 @@ export class PrismExited extends Schema.TaggedErrorClass<PrismExited>()("PrismEx
   }
 }
 
-export class PrismSecretError extends Schema.TaggedErrorClass<PrismSecretError>()(
-  "PrismSecretError",
-  {
-    cause: Schema.Defect(),
-  },
-) {
+export class PrismSecretError extends Schema.TaggedError<PrismSecretError>()("PrismSecretError", {
+  cause: Schema.Defect(),
+}) {
   override get message(): string {
     return "Failed to load the Prism secrets.";
   }
 }
 
 /** External mode needs a secret the store does not hold; the message says how to add it. */
-export class PrismSecretMissing extends Schema.TaggedErrorClass<PrismSecretMissing>()(
+export class PrismSecretMissing extends Schema.TaggedError<PrismSecretMissing>()(
   "PrismSecretMissing",
   {
     name: Schema.String,
@@ -155,7 +149,7 @@ export class PrismSecretMissing extends Schema.TaggedErrorClass<PrismSecretMissi
   }
 }
 
-export class PrismExternalConfigError extends Schema.TaggedErrorClass<PrismExternalConfigError>()(
+export class PrismExternalConfigError extends Schema.TaggedError<PrismExternalConfigError>()(
   "PrismExternalConfigError",
   {
     detail: Schema.String,
@@ -166,7 +160,7 @@ export class PrismExternalConfigError extends Schema.TaggedErrorClass<PrismExter
   }
 }
 
-export class PrismManagementError extends Schema.TaggedErrorClass<PrismManagementError>()(
+export class PrismManagementError extends Schema.TaggedError<PrismManagementError>()(
   "PrismManagementError",
   {
     reason: Schema.Literals(["not-ready", "request-failed"]),

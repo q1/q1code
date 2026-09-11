@@ -35,7 +35,7 @@ import {
 } from "../releaseTarball.ts";
 import { prismDirectories } from "./PrismConfig.ts";
 
-export class PrismBinaryUnsupported extends Schema.TaggedErrorClass<PrismBinaryUnsupported>()(
+export class PrismBinaryUnsupported extends Schema.TaggedError<PrismBinaryUnsupported>()(
   "PrismBinaryUnsupported",
   {
     platform: Schema.String,
@@ -47,7 +47,7 @@ export class PrismBinaryUnsupported extends Schema.TaggedErrorClass<PrismBinaryU
   }
 }
 
-export class PrismBinaryNotFound extends Schema.TaggedErrorClass<PrismBinaryNotFound>()(
+export class PrismBinaryNotFound extends Schema.TaggedError<PrismBinaryNotFound>()(
   "PrismBinaryNotFound",
   {
     path: Schema.String,
@@ -58,7 +58,7 @@ export class PrismBinaryNotFound extends Schema.TaggedErrorClass<PrismBinaryNotF
   }
 }
 
-export class PrismBinaryNotExecutable extends Schema.TaggedErrorClass<PrismBinaryNotExecutable>()(
+export class PrismBinaryNotExecutable extends Schema.TaggedError<PrismBinaryNotExecutable>()(
   "PrismBinaryNotExecutable",
   {
     path: Schema.String,
@@ -70,7 +70,7 @@ export class PrismBinaryNotExecutable extends Schema.TaggedErrorClass<PrismBinar
   }
 }
 
-export class PrismBinaryDownloadError extends Schema.TaggedErrorClass<PrismBinaryDownloadError>()(
+export class PrismBinaryDownloadError extends Schema.TaggedError<PrismBinaryDownloadError>()(
   "PrismBinaryDownloadError",
   {
     reason: Schema.Literals([

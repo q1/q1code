@@ -18,6 +18,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import {
   ProviderAdapterSessionNotFoundError,
+  ProviderAdapterValidationError,
   type ProviderAdapterError,
 } from "../../provider/Errors.ts";
 import type { ProviderAdapterShape } from "../../provider/Services/ProviderAdapter.ts";
@@ -482,12 +483,27 @@ export const makePrismRoutedAdapter = Effect.fn("prism.routedAdapter")(function*
       routeFor(id).pipe(
         Effect.flatMap((route) => route.adapter.respondToUserInput(id, requestId, answers)),
       ),
-    compactThread: (id, selection) =>
-      routeFor(id).pipe(
-        Effect.flatMap(
-          (route) => route.adapter.compactThread?.(id, withoutPrismRoute(selection)) ?? Effect.void,
-        ),
-      ),
+    ...(input.direct.compaction?.type === "native"
+      ? {
+          compaction: {
+            type: "native" as const,
+            start: (id: ThreadId, selection?: ProviderSendTurnInput["modelSelection"]) =>
+              routeFor(id).pipe(
+                Effect.flatMap((route) =>
+                  route.adapter.compaction?.type === "native"
+                    ? route.adapter.compaction.start(id, withoutPrismRoute(selection))
+                    : Effect.fail(
+                        new ProviderAdapterValidationError({
+                          provider: input.direct.provider,
+                          operation: "compactThread",
+                          issue: "The routed adapter does not support native compaction.",
+                        }),
+                      ),
+                ),
+              ),
+          },
+        }
+      : {}),
     ...(input.direct.uploadFeedback
       ? {
           uploadFeedback: (feedback: Parameters<NonNullable<Adapter["uploadFeedback"]>>[0]) =>

@@ -201,7 +201,7 @@ export function normalizeMicPrismDiscovery(discovery: MicPrismDiscoveryWire): Mi
   };
 }
 
-export class MicIdentityUnauthorizedError extends Schema.TaggedErrorClass<MicIdentityUnauthorizedError>()(
+export class MicIdentityUnauthorizedError extends Schema.TaggedError<MicIdentityUnauthorizedError>()(
   "MicIdentityUnauthorizedError",
   {
     reason: Schema.Literals([
@@ -222,7 +222,7 @@ export class MicIdentityUnauthorizedError extends Schema.TaggedErrorClass<MicIde
   }
 }
 
-export class MicIdentityForbiddenError extends Schema.TaggedErrorClass<MicIdentityForbiddenError>()(
+export class MicIdentityForbiddenError extends Schema.TaggedError<MicIdentityForbiddenError>()(
   "MicIdentityForbiddenError",
   { capability: Schema.Union([MicPrismCapability, MicPrismPermission]) },
   { httpApiStatus: 403 },
@@ -236,7 +236,7 @@ export class MicIdentityForbiddenError extends Schema.TaggedErrorClass<MicIdenti
   }
 }
 
-export class MicIdentityUnavailableError extends Schema.TaggedErrorClass<MicIdentityUnavailableError>()(
+export class MicIdentityUnavailableError extends Schema.TaggedError<MicIdentityUnavailableError>()(
   "MicIdentityUnavailableError",
   {
     reason: Schema.Literals([

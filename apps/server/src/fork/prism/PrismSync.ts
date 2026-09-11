@@ -62,7 +62,7 @@ export const SYNC_KEY_ENV = "Q1CODE_PRISM_SYNC_KEY";
 export const SYNC_TOMBSTONE_TTL_MILLIS = 30 * 24 * 60 * 60 * 1000;
 
 /** Sync has no usable configuration for the requested role. The message never names a secret value. */
-export class PrismSyncNotConfigured extends Schema.TaggedErrorClass<PrismSyncNotConfigured>()(
+export class PrismSyncNotConfigured extends Schema.TaggedError<PrismSyncNotConfigured>()(
   "PrismSyncNotConfigured",
   {
     message: Schema.String,

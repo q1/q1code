@@ -45,7 +45,7 @@ import * as ServerConfig from "../config.ts";
 /** The file as JSON, before schema decoding: what `update` mutates so unknown keys are kept. */
 export type RawForkConfig = Readonly<Record<string, unknown>>;
 
-export class ForkConfigWriteError extends Schema.TaggedErrorClass<ForkConfigWriteError>()(
+export class ForkConfigWriteError extends Schema.TaggedError<ForkConfigWriteError>()(
   "ForkConfigWriteError",
   {
     path: Schema.String,

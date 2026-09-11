@@ -53,7 +53,7 @@ export const renderCodexProxyConfigToml = (endpoint: CodexProxyEndpoint): string
     "",
   ].join("\n");
 
-export class CodexProxyHomeError extends Schema.TaggedErrorClass<CodexProxyHomeError>()(
+export class CodexProxyHomeError extends Schema.TaggedError<CodexProxyHomeError>()(
   "CodexProxyHomeError",
   {
     homeDir: Schema.String,

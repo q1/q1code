@@ -24,13 +24,22 @@ const endpoint: PrismEndpoint = {
   usageSource: true,
 };
 
-const quotaStatus = {
-  accounts: {
-    "claude-a@example.com.json": { provider: "claude", five_hour: { used_percent: 25 } },
-  },
+const authFiles = {
+  files: [
+    {
+      id: "claude-fixture.json",
+      auth_index: "fixture-index",
+      provider: "claude",
+      email: "fixture@example.com",
+    },
+  ],
+};
+const usageResponse = {
+  status_code: 200,
+  body: JSON.stringify({ five_hour: { utilization: 25, resets_at: null } }),
 };
 
-/** A proxy that answers the quota status only for Prism's management secret. */
+/** Scripted management responses; provider usage calls never leave this fixture. */
 const makeProxy = () => {
   const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> = [];
   const client = HttpClient.make((request) =>
@@ -40,7 +49,7 @@ const makeProxy = () => {
       return HttpClientResponse.fromWeb(
         request,
         authorization === "Bearer mgmt"
-          ? Response.json(quotaStatus)
+          ? Response.json(request.url.endsWith("/auth-files") ? authFiles : usageResponse)
           : new Response("nope", { status: 401 }),
       );
     }),
@@ -85,11 +94,15 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Prism usage-limit s
             assert.equal(prism.label, "Prism");
             assert.isUndefined(prism.error);
             assert.equal(prism.accounts.length, 1);
-            assert.equal(prism.accounts[0]?.email, "a@example.com");
+            assert.equal(prism.accounts[0]?.email, "fixture@example.com");
             assert.equal(prism.accounts[0]?.driver, "claudeAgent");
             assert.deepEqual(proxy.requests, [
               {
-                url: "http://127.0.0.1:8317/v0/management/quota-scheduler/status",
+                url: "http://127.0.0.1:8317/v0/management/auth-files",
+                authorization: "Bearer mgmt",
+              },
+              {
+                url: "http://127.0.0.1:8317/v0/management/api-call",
                 authorization: "Bearer mgmt",
               },
             ]);
@@ -159,7 +172,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Prism usage-limit s
         );
         assert.deepEqual(
           proxy.requests.map((r) => r.url),
-          ["https://hub.example/v0/management/quota-scheduler/status"],
+          ["https://hub.example/v0/management/auth-files"],
         );
       }).pipe(
         Effect.provide(

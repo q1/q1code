@@ -144,7 +144,7 @@ export const MicPrismCallbackWrite = Schema.Struct({
 });
 export { PrismAccountId as MicPrismAccountId };
 
-export class MicPrismManagementError extends Schema.TaggedErrorClass<MicPrismManagementError>()(
+export class MicPrismManagementError extends Schema.TaggedError<MicPrismManagementError>()(
   "MicPrismManagementError",
   { reason: Schema.Literals(["conflict", "invalid-input", "unconfirmed"]) },
 ) {
@@ -205,7 +205,7 @@ export const MicPrismChatChunk = Schema.Struct({
   ),
 });
 
-export class MicPrismInferenceError extends Schema.TaggedErrorClass<MicPrismInferenceError>()(
+export class MicPrismInferenceError extends Schema.TaggedError<MicPrismInferenceError>()(
   "MicPrismInferenceError",
   { status: Schema.Int, reason: Schema.Literals(["provider", "interrupted", "invalid-response"]) },
 ) {

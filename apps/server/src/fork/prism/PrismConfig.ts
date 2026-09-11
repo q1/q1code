@@ -95,7 +95,7 @@ export const renderPrismConfig = (input: PrismConfigInput): string =>
     "",
   ].join("\n");
 
-export class PrismConfigWriteError extends Schema.TaggedErrorClass<PrismConfigWriteError>()(
+export class PrismConfigWriteError extends Schema.TaggedError<PrismConfigWriteError>()(
   "PrismConfigWriteError",
   {
     path: Schema.String,

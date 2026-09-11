@@ -21,7 +21,7 @@ import * as NodeCrypto from "node:crypto";
  * `sha256sum` prints), and only then handed to `npm install` as a local file.
  */
 
-export class ReleaseTarballError extends Schema.TaggedErrorClass<ReleaseTarballError>()(
+export class ReleaseTarballError extends Schema.TaggedError<ReleaseTarballError>()(
   "ReleaseTarballError",
   {
     reason: Schema.Literals([
@@ -54,7 +54,7 @@ export class ReleaseTarballError extends Schema.TaggedErrorClass<ReleaseTarballE
   }
 }
 
-export class ReleaseDownloadError extends Schema.TaggedErrorClass<ReleaseDownloadError>()(
+export class ReleaseDownloadError extends Schema.TaggedError<ReleaseDownloadError>()(
   "ReleaseDownloadError",
   {
     url: Schema.String,

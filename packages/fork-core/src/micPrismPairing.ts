@@ -92,7 +92,7 @@ export const MicPrismRevokedInstance = Schema.Struct({
 });
 export type MicPrismRevokedInstance = typeof MicPrismRevokedInstance.Type;
 
-export class MicPrismPairingError extends Schema.TaggedErrorClass<MicPrismPairingError>()(
+export class MicPrismPairingError extends Schema.TaggedError<MicPrismPairingError>()(
   "MicPrismPairingError",
   {
     reason: Schema.Literals([
